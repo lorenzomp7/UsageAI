@@ -7,7 +7,7 @@ import webbrowser
 from datetime import datetime, timezone
 
 from . import storage
-from .core import Window, evaluate, format_reset, pace_text
+from .core import Window, evaluate, format_reset, pace_text, today_text
 from .icon import render
 from .providers import PROVIDERS, ApiError, AuthError
 
@@ -165,6 +165,9 @@ class UsageApp:
                     pt = pace_text(w, now)
                     if pt:
                         lines.append(f"      Ritmo: {pt}")
+                    tt = today_text(w, self.state.get(w.key))
+                    if tt:
+                        lines.append(f"      Oggi: {tt.removeprefix('oggi ')}")
             if err:
                 lines.append(f"   ⚠ {err}")
         if self.general_error:

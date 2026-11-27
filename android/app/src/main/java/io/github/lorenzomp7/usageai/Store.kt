@@ -28,6 +28,7 @@ class Store(context: Context) {
             thresholdsLong = intList(prefs.getString("t_long", null) ?: prefs.getString("tweek", null)) ?: listOf(50, 75, 90),
             paceEnabled = prefs.getBoolean("pace", true),
             paceMargin = prefs.getInt("pace_margin", 10),
+            dailyEnabled = prefs.getBoolean("daily", true),
         )
         set(v) {
             prefs.edit()
@@ -35,6 +36,7 @@ class Store(context: Context) {
                 .putString("t_long", v.thresholdsLong.joinToString(","))
                 .putBoolean("pace", v.paceEnabled)
                 .putInt("pace_margin", v.paceMargin)
+                .putBoolean("daily", v.dailyEnabled)
                 .apply()
         }
 

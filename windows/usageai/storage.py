@@ -54,6 +54,8 @@ def load_settings() -> Settings:
         s.thresholds_long = long
     if isinstance(raw.get("pace_enabled"), bool):
         s.pace_enabled = raw["pace_enabled"]
+    if isinstance(raw.get("daily_enabled"), bool):
+        s.daily_enabled = raw["daily_enabled"]
     for name, lo, hi in (("pace_margin", 1, 50), ("interval_min", 1, 60)):
         v = raw.get(name)
         if isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi:
@@ -74,10 +76,16 @@ def load_state() -> tuple[dict[str, WindowState], dict[str, dict]]:
             continue
         if ":" not in key:          # versione 1: chiavi di Claude senza prefisso
             key = f"claude:{key}"
+        def opt_float(x):
+            return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) else None
         windows[key] = WindowState(
             resets_at=v.get("resets_at"),
             notified=[int(x) for x in v.get("notified", []) if isinstance(x, int)],
             pace_notified=bool(v.get("pace_notified", False)),
+            day=v.get("day") if isinstance(v.get("day"), str) else None,
+            day_start=opt_float(v.get("day_start")),
+            day_notified=bool(v.get("day_notified", False)),
+            last_util=opt_float(v.get("last_util")),
         )
     caches = raw.get("caches") if isinstance(raw.get("caches"), dict) else {}
     if raw.get("org_id") and "claude" not in caches:

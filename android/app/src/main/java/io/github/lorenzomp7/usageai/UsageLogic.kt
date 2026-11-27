@@ -68,12 +68,18 @@ data class AlertSettings(
     val thresholdsLong: List<Int> = listOf(50, 75, 90),
     val paceEnabled: Boolean = true,
     val paceMargin: Int = 10,
+    val dailyEnabled: Boolean = true,   // quota giornaliera: 100% / giorni del periodo
 )
 
 data class WindowState(
     val resetsAt: String? = null,
     val notified: List<Int> = emptyList(),
     val paceNotified: Boolean = false,
+    // Quota giornaliera: giorno di calendario (locale) e valore all'inizio di quel giorno.
+    val day: String? = null,
+    val dayStart: Double? = null,
+    val dayNotified: Boolean = false,
+    val lastUtil: Double? = null,
 )
 
 data class Alert(val key: String, val title: String, val text: String)
@@ -150,6 +156,44 @@ private fun sameWindow(oldIso: String?, new: Instant?): Boolean {
 
 private fun pct(v: Double) = v.roundToInt().toString()
 
+private const val MIN_DAYS_FOR_DAILY_QUOTA = 2.0
+
+/** Percentuale utilizzabile al giorno: 100% / giorni del periodo (settimana = 14,29%). */
+fun dailyQuota(w: UsageWindow): Double? {
+    val len = w.length ?: return null
+    if (!w.isLong) return null
+    val days = len.toMillis() / 86_400_000.0
+    return if (days >= MIN_DAYS_FOR_DAILY_QUOTA) 100.0 / days else null
+}
+
+fun usedToday(w: UsageWindow, ws: WindowState?): Double? =
+    ws?.dayStart?.let { (w.utilization - it).coerceAtLeast(0.0) }
+
+fun fmtPct(v: Double): String = "%.1f".format(java.util.Locale.US, v).replace('.', ',')
+
+fun todayText(w: UsageWindow, ws: WindowState?): String? {
+    val quota = dailyQuota(w) ?: return null
+    val used = usedToday(w, ws) ?: return null
+    val left = quota - used
+    val tail = if (left >= 0) "restano ${fmtPct(left)} punti" else "oltre di ${fmtPct(-left)} punti"
+    return "oggi +${fmtPct(used)}% su ${fmtPct(quota)}% al giorno ($tail)"
+}
+
+/** Aggiorna il valore di inizio giornata. Base del giorno = ultimo valore visto il giorno prima. */
+private fun updateDay(ws: WindowState, old: WindowState?, newWindow: Boolean, w: UsageWindow, today: String): WindowState {
+    val u = w.utilization
+    val next = when {
+        old == null -> ws.copy(day = today, dayStart = u, dayNotified = false)
+        newWindow -> ws.copy(day = today, dayStart = 0.0, dayNotified = old.day == today && old.dayNotified)
+        old.day != today -> ws.copy(day = today, dayStart = minOf(old.lastUtil ?: u, u), dayNotified = false)
+        else -> {
+            val start = old.dayStart
+            ws.copy(day = old.day, dayStart = if (start == null || u < start) u else start, dayNotified = old.dayNotified)
+        }
+    }
+    return next.copy(lastUtil = u)
+}
+
 /**
  * Decide le notifiche. Ogni soglia scatta una volta sola per finestra.
  * Lo stato dei servizi assenti da [windows] resta com'è.
@@ -159,15 +203,17 @@ fun evaluate(
     settings: AlertSettings,
     state: Map<String, WindowState>,
     now: Instant,
+    zone: ZoneId = ZoneId.systemDefault(),
 ): Pair<List<Alert>, Map<String, WindowState>> {
     val alerts = mutableListOf<Alert>()
     val newState = state.toMutableMap()
+    val today = now.atZone(zone).toLocalDate().toString()
 
     for (w in windows) {
         val old = state[w.key]
-        var ws = if (old == null || !sameWindow(old.resetsAt, w.resetsAt)) {
-            WindowState(resetsAt = w.resetsAt?.toString())
-        } else old
+        val newWindow = old == null || !sameWindow(old.resetsAt, w.resetsAt)
+        var ws = if (newWindow) WindowState(resetsAt = w.resetsAt?.toString()) else old!!
+        ws = updateDay(ws, old, newWindow, w, today)
 
         val thresholds = if (w.isLong) settings.thresholdsLong else settings.thresholdsShort
         val crossed = thresholds.filter { w.utilization >= it && it !in ws.notified }.sorted()
@@ -197,6 +243,19 @@ fun evaluate(
                 }
             }
         }
+
+        val quota = dailyQuota(w)
+        val used = usedToday(w, ws)
+        if (settings.dailyEnabled && quota != null && used != null && used > quota + 0.05 && !ws.dayNotified) {
+            val days = (w.length!!.toMillis() / 86_400_000.0).roundToInt()
+            alerts += Alert(
+                key = w.key + ":day",
+                title = "${w.fullLabel}: superata la quota di oggi",
+                text = "Oggi hai usato ${fmtPct(used)} punti, la quota giornaliera è ${fmtPct(quota)}% " +
+                    "(100% / $days giorni). Ora sei al ${pct(w.utilization)}%.",
+            )
+            ws = ws.copy(dayNotified = true)
+        }
         newState[w.key] = ws
     }
     return alerts to newState
@@ -222,6 +281,10 @@ fun stateToJson(state: Map<String, WindowState>): String = buildJsonObject {
             put("resets_at", v.resetsAt)
             put("notified", buildJsonArray { v.notified.forEach { add(JsonPrimitive(it)) } })
             put("pace_notified", v.paceNotified)
+            put("day", v.day)
+            put("day_start", v.dayStart)
+            put("day_notified", v.dayNotified)
+            put("last_util", v.lastUtil)
         })
     }
 }.toString()
@@ -236,6 +299,10 @@ fun stateFromJson(json: String?): Map<String, WindowState> {
             resetsAt = o.str("resets_at"),
             notified = (o["notified"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.intOrNull } ?: emptyList(),
             paceNotified = (o["pace_notified"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            day = o.str("day"),
+            dayStart = (o["day_start"] as? JsonPrimitive)?.doubleOrNull,
+            dayNotified = (o["day_notified"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            lastUtil = (o["last_util"] as? JsonPrimitive)?.doubleOrNull,
         )
     }.toMap()
 }

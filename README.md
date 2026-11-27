@@ -35,6 +35,7 @@ Valgono per tutti i servizi:
 - **Soglie lunghe** (settimana o mese): default 50, 75, 90%.
 - Ogni soglia ti avvisa una sola volta per finestra e si riattiva al reset.
 - **Ritmo**: ti avvisa se un periodo lungo va più veloce del tempo passato. Esempio: a 3 giorni su 7 il ritmo costante è il 43%; se sei al 55% con margine 10, arriva l'avviso. Vale anche per i mesi di Cursor e Copilot. Non scatta sotto il 20% per evitare falsi allarmi a inizio periodo.
+- **Quota giornaliera**: un periodo lungo diviso per i suoi giorni dà quanto puoi usare al giorno: settimana = 100% / 7 = 14,29%, mese di 30 giorni = 3,33%. Se in un giorno di calendario (da mezzanotte) superi la quota, ricevi un avviso, una volta al giorno. L'app e il menu mostrano anche «oggi +X% su 14,3% al giorno». Il conteggio di oggi parte dall'ultimo valore visto ieri; dopo un reset riparte da zero.
 - Se un servizio non risponde, gli altri vengono controllati lo stesso. Se l'accesso a un servizio scade, ricevi una sola notifica.
 
 ## Scaricare le app

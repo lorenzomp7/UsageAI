@@ -38,6 +38,7 @@ class MainActivity : Activity() {
     private lateinit var tLongField: EditText
     private lateinit var paceBox: CheckBox
     private lateinit var marginField: EditText
+    private lateinit var dailyBox: CheckBox
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -124,6 +125,10 @@ class MainActivity : Activity() {
         col.addView(paceBox)
         col.addView(text("…oltre quanti punti di anticipo", 14f))
         marginField = field("10").also { col.addView(it) }
+        dailyBox = CheckBox(this).apply {
+            text = "Avvisami se in un giorno supero la quota giornaliera (100% / giorni del periodo: settimana = 14,29% al giorno)"
+        }
+        col.addView(dailyBox)
         col.addView(button("Salva impostazioni") { saveSettings() })
 
         col.addView(text(
@@ -138,6 +143,7 @@ class MainActivity : Activity() {
         val now = Instant.now()
         val windows = store.lastWindows
         val errors = store.errors
+        val state = store.state
         servicesBox.removeAllViews()
 
         for (s in SERVICES) {
@@ -163,6 +169,7 @@ class MainActivity : Activity() {
                 })
                 row.addView(text(formatReset(w.resetsAt, now), 13f, dim = 0.7f))
                 if (w.isLong) paceText(w, now)?.let { row.addView(text("Ritmo: $it", 13f, dim = 0.7f)) }
+                todayText(w, state[w.key])?.let { row.addView(text("Oggi: ${it.removePrefix("oggi ")}", 13f, dim = 0.7f)) }
                 servicesBox.addView(row)
             }
             errors[s.id]?.let { servicesBox.addView(text("⚠ $it", 13f).apply { setPadding(0, dp(6), 0, 0) }) }
@@ -203,6 +210,7 @@ class MainActivity : Activity() {
         tLongField.setText(s.thresholdsLong.joinToString(", "))
         paceBox.isChecked = s.paceEnabled
         marginField.setText(s.paceMargin.toString())
+        dailyBox.isChecked = s.dailyEnabled
     }
 
     private fun saveSettings() {
@@ -215,6 +223,7 @@ class MainActivity : Activity() {
                 thresholdsLong = parseThresholds(tLongField.text.toString()),
                 paceEnabled = paceBox.isChecked,
                 paceMargin = margin,
+                dailyEnabled = dailyBox.isChecked,
             )
             Toast.makeText(this, "Impostazioni salvate", Toast.LENGTH_SHORT).show()
             loadSettingsIntoFields()

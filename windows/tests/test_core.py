@@ -113,3 +113,68 @@ def test_legacy_state_is_migrated(tmp_path, monkeypatch):
     s = storage.load_settings()
     assert s.thresholds_short == [70] and s.thresholds_long == [60]
     assert WindowState() == WindowState()
+
+
+# ---------------- quota giornaliera ----------------
+
+from usageai.core import daily_quota, today_text  # noqa: E402
+
+
+def week(util, reset=NOW + timedelta(days=4)):
+    return Window("claude", "claude:seven_day", "Settimana", util, reset, timedelta(days=7))
+
+
+def day_alerts(alerts):
+    return [a for a in alerts if a.key.endswith(":day")]
+
+
+def test_daily_quota_values():
+    assert daily_quota(week(0)) == pytest.approx(100 / 7)          # 14,29%
+    month = Window("cursor", "cursor:plan", "Mese", 0, NOW, timedelta(days=30))
+    assert daily_quota(month) == pytest.approx(100 / 30)
+    five = Window("claude", "claude:five_hour", "5 ore", 0, NOW, timedelta(hours=5))
+    assert daily_quota(five) is None
+
+
+def test_daily_quota_alert_once_per_day_and_rearms_next_day():
+    s = Settings(thresholds_long=[], pace_enabled=False)
+    utc = timezone.utc
+    t = datetime(2026, 11, 26, 9, 0, tzinfo=utc)
+    _, st = evaluate([week(20)], s, {}, t, tz=utc)                   # primo dato: base 20
+    alerts, st = evaluate([week(30)], s, st, t + timedelta(hours=2), tz=utc)   # +10 < 14,29
+    assert day_alerts(alerts) == []
+    alerts, st = evaluate([week(35)], s, st, t + timedelta(hours=3), tz=utc)   # +15 > 14,29
+    (a,) = day_alerts(alerts)
+    assert "superata la quota di oggi" in a.title and "15,0 punti" in a.text and "14,3%" in a.text
+    alerts, st = evaluate([week(40)], s, st, t + timedelta(hours=5), tz=utc)
+    assert day_alerts(alerts) == []
+    # giorno dopo: la base è l'ultimo valore di ieri (40)
+    t2 = datetime(2026, 11, 27, 8, 0, tzinfo=utc)
+    alerts, st = evaluate([week(41)], s, st, t2, tz=utc)
+    assert day_alerts(alerts) == [] and st["claude:seven_day"].day_start == 40
+    assert today_text(week(41), st["claude:seven_day"]).startswith("oggi +1,0% su 14,3% al giorno")
+    alerts, st = evaluate([week(56)], s, st, t2 + timedelta(hours=4), tz=utc)
+    assert len(day_alerts(alerts)) == 1
+
+
+def test_daily_quota_counts_from_zero_after_reset_and_can_be_disabled():
+    utc = timezone.utc
+    s = Settings(thresholds_long=[], pace_enabled=False)
+    t = datetime(2026, 11, 26, 9, 0, tzinfo=utc)
+    _, st = evaluate([week(90, reset=t + timedelta(hours=1))], s, {}, t, tz=utc)
+    new = week(16, reset=t + timedelta(days=7, hours=1))            # periodo ricominciato
+    alerts, st = evaluate([new], s, st, t + timedelta(hours=3), tz=utc)
+    assert len(day_alerts(alerts)) == 1 and st["claude:seven_day"].day_start == 0
+    off = Settings(thresholds_long=[], pace_enabled=False, daily_enabled=False)
+    _, st2 = evaluate([week(10)], off, {}, t, tz=utc)
+    alerts, _ = evaluate([week(60)], off, st2, t + timedelta(hours=1), tz=utc)
+    assert day_alerts(alerts) == []
+
+
+def test_daily_state_is_saved(tmp_path, monkeypatch):
+    from usageai import storage
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    st = {"claude:seven_day": WindowState("2026-12-01T00:00:00+00:00", [50], False, "2026-11-27", 40.0, True, 45.5)}
+    storage.save_state(st, {})
+    loaded, _ = storage.load_state()
+    assert loaded == st

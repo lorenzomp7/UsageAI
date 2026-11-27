@@ -44,6 +44,7 @@ class UsageWidget : AppWidgetProvider() {
             val now = Instant.now()
             val shown = headline(store.lastWindows)
             val errors = store.errors
+            val state = store.state
 
             val views = RemoteViews(context.packageName, R.layout.widget_usage)
             ROWS.forEachIndexed { i, r ->
@@ -56,7 +57,8 @@ class UsageWidget : AppWidgetProvider() {
                 views.setTextViewText(r[1], (if (w.provider in errors) "⚠ " else "") + w.fullLabel)
                 views.setTextViewText(r[2], "${w.utilization.roundToInt()}%")
                 views.setProgressBar(r[3], 100, w.utilization.roundToInt().coerceIn(0, 100), false)
-                val sub = if (w.isLong) paceText(w, now) ?: formatReset(w.resetsAt, now) else formatReset(w.resetsAt, now)
+                val sub = if (w.isLong) todayText(w, state[w.key])?.replaceFirstChar { it.uppercase() }
+                    ?: paceText(w, now) ?: formatReset(w.resetsAt, now) else formatReset(w.resetsAt, now)
                 views.setTextViewText(r[4], sub)
             }
             views.setViewVisibility(R.id.w_empty, if (shown.isEmpty()) View.VISIBLE else View.GONE)

@@ -47,10 +47,14 @@ def open_settings(settings: Settings, providers, configured: dict, auto: dict, a
     ttk.Checkbutton(alerts, text="Avvisami se consumo un periodo lungo più veloce del ritmo costante",
                     variable=pace_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
     margin = row(alerts, 4, "…oltre quanti punti di anticipo", str(settings.pace_margin))
-    interval = row(alerts, 5, "Controlla ogni (minuti)", str(settings.interval_min))
+    daily_var = tk.BooleanVar(value=settings.daily_enabled)
+    ttk.Checkbutton(alerts, text="Avvisami se in un giorno supero la quota giornaliera "
+                                 "(100% / giorni del periodo: settimana = 14,29% al giorno)",
+                    variable=daily_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=(10, 0))
+    interval = row(alerts, 6, "Controlla ogni (minuti)", str(settings.interval_min))
     auto_var = tk.BooleanVar(value=autostart)
     ttk.Checkbutton(alerts, text="Avvia con Windows", variable=auto_var).grid(
-        row=6, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
 
     # ---- una scheda per servizio ----
     cred_vars: dict[str, tk.StringVar] = {}
@@ -88,6 +92,7 @@ def open_settings(settings: Settings, providers, configured: dict, auto: dict, a
                 thresholds_long=parse_thresholds(tl.get()),
                 pace_enabled=pace_var.get(),
                 pace_margin=int(margin.get()),
+                daily_enabled=daily_var.get(),
                 interval_min=int(interval.get()),
             )
             if not 1 <= new.pace_margin <= 50:

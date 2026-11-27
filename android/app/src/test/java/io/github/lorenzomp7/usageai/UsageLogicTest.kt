@@ -234,4 +234,48 @@ class UsageLogicTest {
         assertTrue(c.label, c.label.contains("15.00 $"))
         assertTrue(Parsers.openRouterCredits("""{"error":"forbidden"}""").isEmpty())
     }
+
+    // ---------- quota giornaliera ----------
+
+    private fun week(util: Double, reset: Instant = now.plus(Duration.ofDays(4))) =
+        UsageWindow("claude", "claude:seven_day", "Settimana", util, reset, Duration.ofDays(7))
+    private val utc = java.time.ZoneOffset.UTC
+    private fun dayAlerts(a: List<Alert>) = a.filter { it.key.endsWith(":day") }
+
+    @Test fun dailyQuotaValues() {
+        assertEquals(100.0 / 7, dailyQuota(week(0.0))!!, 1e-9)
+        assertEquals(100.0 / 30, dailyQuota(UsageWindow("cursor", "cursor:plan", "Mese", 0.0, now, Duration.ofDays(30)))!!, 1e-9)
+        assertNull(dailyQuota(UsageWindow("claude", "claude:five_hour", "5 ore", 0.0, now, Duration.ofHours(5))))
+    }
+
+    @Test fun dailyQuotaAlertOncePerDayAndNextDay() {
+        val s = AlertSettings(thresholdsLong = emptyList(), paceEnabled = false)
+        val t = Instant.parse("2026-11-26T09:00:00Z")
+        var st = evaluate(listOf(week(20.0)), s, emptyMap(), t, utc).second
+        evaluate(listOf(week(30.0)), s, st, t.plus(Duration.ofHours(2)), utc).let { assertTrue(dayAlerts(it.first).isEmpty()); st = it.second }
+        evaluate(listOf(week(35.0)), s, st, t.plus(Duration.ofHours(3)), utc).let {
+            val a = dayAlerts(it.first).single()
+            assertTrue(a.text, a.text.contains("15,0 punti") && a.text.contains("14,3%"))
+            st = it.second
+        }
+        evaluate(listOf(week(40.0)), s, st, t.plus(Duration.ofHours(5)), utc).let { assertTrue(dayAlerts(it.first).isEmpty()); st = it.second }
+        val t2 = Instant.parse("2026-11-27T08:00:00Z")
+        evaluate(listOf(week(41.0)), s, st, t2, utc).let { assertTrue(dayAlerts(it.first).isEmpty()); st = it.second }
+        assertEquals(40.0, st["claude:seven_day"]!!.dayStart!!, 1e-9)
+        assertTrue(todayText(week(41.0), st["claude:seven_day"])!!.startsWith("oggi +1,0% su 14,3% al giorno"))
+        assertEquals(1, dayAlerts(evaluate(listOf(week(56.0)), s, st, t2.plus(Duration.ofHours(4)), utc).first).size)
+        assertEquals(st, stateFromJson(stateToJson(st)))
+    }
+
+    @Test fun dailyQuotaAfterResetAndDisabled() {
+        val s = AlertSettings(thresholdsLong = emptyList(), paceEnabled = false)
+        val t = Instant.parse("2026-11-26T09:00:00Z")
+        val st = evaluate(listOf(week(90.0, t.plus(Duration.ofHours(1)))), s, emptyMap(), t, utc).second
+        val (alerts, st2) = evaluate(listOf(week(16.0, t.plus(Duration.ofDays(7)).plus(Duration.ofHours(1)))), s, st, t.plus(Duration.ofHours(3)), utc)
+        assertEquals(1, dayAlerts(alerts).size)
+        assertEquals(0.0, st2["claude:seven_day"]!!.dayStart!!, 1e-9)
+        val off = AlertSettings(thresholdsLong = emptyList(), paceEnabled = false, dailyEnabled = false)
+        val s3 = evaluate(listOf(week(10.0)), off, emptyMap(), t, utc).second
+        assertTrue(dayAlerts(evaluate(listOf(week(60.0)), off, s3, t.plus(Duration.ofHours(1)), utc).first).isEmpty())
+    }
 }

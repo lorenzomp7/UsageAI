@@ -76,6 +76,8 @@ def open_settings(settings: Settings, providers, configured: dict, auto: dict, a
     ttk.Entry(alerts, textvariable=interval, width=16).grid(row=r, column=1, sticky="w", padx=(8, 0))
     r += 1
     auto_var = check("Avvia con Windows", autostart)
+    record_var = check("Salva le risposte dei servizi con campi nuovi (pulite da token ed email) "
+                       "per migliorare l'app", settings.record_responses)
 
     # ---- una scheda per servizio ----
     cred_vars: dict[str, tk.StringVar] = {}
@@ -127,6 +129,7 @@ def open_settings(settings: Settings, providers, configured: dict, auto: dict, a
                 auth_alerts_enabled=auth_var.get(),
                 disabled_providers=sorted(pid for pid, v in enabled_vars.items() if not v.get()),
                 interval_min=int(interval.get()),
+                record_responses=record_var.get(),
             )
             if not 1 <= new.pace_margin <= 50:
                 raise ValueError("Il margine sul ritmo va da 1 a 50 punti.")

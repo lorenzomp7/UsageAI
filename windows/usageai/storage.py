@@ -53,7 +53,7 @@ def load_settings() -> Settings:
     if long is not None:
         s.thresholds_long = long
     for name in ("notifications_enabled", "short_enabled", "long_enabled", "pace_enabled",
-                 "daily_enabled", "auth_alerts_enabled"):
+                 "daily_enabled", "auth_alerts_enabled", "record_responses"):
         if isinstance(raw.get(name), bool):
             setattr(s, name, raw[name])
     dp = raw.get("disabled_providers")

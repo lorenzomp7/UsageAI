@@ -6,12 +6,12 @@ Servizi supportati:
 
 | Servizio | Cosa legge | Accesso su Android | Accesso su Windows |
 |---|---|---|---|
-| **Claude** | Sessione 5 ore, settimana, settimane per modello | Login nell'app, link email o `sessionKey` | `sessionKey` |
+| **Claude** | Sessione 5 ore, settimana, settimane per modello (anche Fable), spesa extra del mese, reset dei limiti disponibili | Login nell'app, link email o `sessionKey` | `sessionKey` |
 | **ChatGPT / Codex** | Sessione 5 ore e settimana di Codex, limiti aggiuntivi, spesa del workspace, crediti, reset disponibili | **Codice** (accesso dal browser), login nell'app o cookie | Da solo, se usi la CLI di Codex (tramite `codex app-server`); altrimenti cookie |
 | **Gemini** | Sessione 5 ore e settimana del piano Google AI | Cookie (Google blocca il login nelle app) | Cookie |
 | **Cursor** | Uso incluso del mese, pool API e Auto, spesa extra | Login nell'app o `WorkosCursorSessionToken` | `WorkosCursorSessionToken` |
-| **GitHub Copilot** | Richieste premium del mese | Token GitHub | Token GitHub |
-| **Perplexity** | Crediti del piano, acquistati e bonus | Login nell'app (email) o cookie | Cookie / session-token |
+| **GitHub Copilot** | Crediti AI del mese (o richieste premium), uso aggiuntivo oltre i compresi | Token GitHub | Token GitHub |
+| **Perplexity** | Crediti del piano, acquistati e bonus, crediti in scadenza, ricerche del mese (se Perplexity le riporta) | Login nell'app (email) o cookie | Cookie / session-token |
 | **Grok** (SuperGrok) | Crediti del periodo (settimana o mese) | **Codice** (accesso dal browser) o token della CLI di Grok | Da solo, se usi la CLI di Grok; altrimenti token |
 | **Mistral** | Budget API incluso e Vibe del mese | Login nell'app (email) o cookie | Cookie di admin.mistral.ai |
 | **OpenRouter** | Limite di spesa della chiave, credito prepagato | Chiave API | Chiave API |
@@ -52,6 +52,13 @@ Come funzionano:
 - **Ritmo**: ti avvisa se un periodo lungo va più veloce del tempo passato. Esempio: a 3 giorni su 7 il ritmo costante è il 43%; se sei al 55% con margine 10, arriva l'avviso. Vale anche per i mesi di Cursor e Copilot. Non scatta sotto il 20% per evitare falsi allarmi a inizio periodo.
 - **Quota giornaliera**: un periodo lungo diviso per i suoi giorni dà quanto puoi usare al giorno: settimana = 100% / 7 = 14,29%, mese di 30 giorni = 3,33%. Se in un giorno di calendario (da mezzanotte) superi la quota, ricevi un avviso, una volta al giorno. L'app e il menu mostrano anche «oggi +X% su 14,3% al giorno». Il conteggio di oggi parte dall'ultimo valore visto ieri; dopo un reset riparte da zero.
 - Se un servizio non risponde, gli altri vengono controllati lo stesso. Se l'accesso a un servizio scade, ricevi una sola notifica.
+
+## Risposte salvate (solo Windows)
+
+Quando un servizio risponde con campi mai visti (o la prima volta), l'app ne salva una copia **già pulita** da token,
+cookie, email e identificativi in `%APPDATA%\UsageAI\registrazioni` (una al giorno per indirizzo, al massimo 200 file).
+Servono a leggere i campi non documentati (previsione di Claude, ricerche di Perplexity…) su dati veri. Niente esce
+dal PC: la cartella si apre dal menu dell'icona («Cartella delle risposte salvate») e si spegne in Impostazioni.
 
 ## Scaricare le app
 

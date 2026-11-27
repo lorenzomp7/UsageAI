@@ -10,6 +10,8 @@ from . import storage
 from .core import Window, evaluate, format_reset, pace_text, today_text
 from .icon import render
 from .providers import PROVIDERS, ApiError, AuthError
+from .providers import base as providers_base
+from .registra import Registratore
 
 USAGE_PAGES = {
     "claude": "https://claude.ai/settings/usage",
@@ -21,6 +23,7 @@ USAGE_PAGES = {
     "grok": "https://grok.com",
     "mistral": "https://admin.mistral.ai/subscription",
     "openrouter": "https://openrouter.ai/activity",
+    "kimi": "https://www.kimi.com/code",
 }
 log = logging.getLogger("usageai")
 
@@ -45,6 +48,26 @@ class UsageApp:
         self._stop = threading.Event()
         self._settings_open = threading.Lock()
         self.tray = tray
+
+    def enable_recording(self, folder=None) -> Registratore:
+        """Salva (pulite) le risposte con campi nuovi, finché l'impostazione è accesa."""
+        rec = Registratore(folder or storage.data_dir() / "registrazioni")
+
+        def observe(url, text):
+            if self.settings.record_responses:
+                rec(url, text)
+        providers_base.OSSERVATORI.append(observe)
+        self.recorder = rec
+        return rec
+
+    def open_recordings(self, *_):
+        folder = storage.data_dir() / "registrazioni"
+        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            import os
+            os.startfile(str(folder))   # solo Windows
+        except (AttributeError, OSError):
+            webbrowser.open(folder.as_uri())
 
     @property
     def http(self):
@@ -244,6 +267,7 @@ def run():
         format="%(asctime)s %(levelname)s %(message)s",
     )
     app = UsageApp()
+    app.enable_recording()
 
     def open_page(pid):
         return lambda *_: webbrowser.open(USAGE_PAGES[pid])
@@ -258,6 +282,7 @@ def run():
         pages = [pystray.MenuItem(p.name, open_page(p.id)) for p in app.providers if p.id in USAGE_PAGES]
         yield pystray.MenuItem("Apri pagina consumo", pystray.Menu(*pages))
         yield pystray.MenuItem("Impostazioni…", app.open_settings)
+        yield pystray.MenuItem("Cartella delle risposte salvate", app.open_recordings)
         yield pystray.MenuItem("Esci", app.quit)
 
     tray = pystray.Icon("UsageAI", render(None), "UsageAI", menu=pystray.Menu(dynamic_items))

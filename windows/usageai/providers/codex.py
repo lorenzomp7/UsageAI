@@ -275,7 +275,7 @@ def read_with_app_server(exe: str, timeout: float = APP_SERVER_TIMEOUT, popen=su
 
     try:
         send({"id": 0, "method": "initialize",
-              "params": {"clientInfo": {"name": "usageai", "title": "UsageAI", "version": "2.4"}}})
+              "params": {"clientInfo": {"name": "usageai", "title": "UsageAI", "version": "2.5"}}})
         wait_for(0)
         send({"method": "initialized"})
         send({"id": 1, "method": "account/rateLimits/read"})

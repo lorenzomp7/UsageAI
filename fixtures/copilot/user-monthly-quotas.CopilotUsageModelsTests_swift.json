@@ -1,0 +1,10 @@
+{
+  "copilot_plan": "business",
+  "token_based_billing": true,
+  "monthly_quotas": {"completions": 300},
+  "limited_user_quotas": {"completions": 75},
+  "quota_snapshots": {
+    "premium_interactions": {"entitlement": 0, "remaining": 0, "percent_remaining": 100,
+                             "quota_id": "premium_interactions", "credits_used": 31}
+  }
+}

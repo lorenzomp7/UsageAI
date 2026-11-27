@@ -1,0 +1,22 @@
+{
+  "five_hour": {"utilization": 12.0, "resets_at": "2026-09-09T17:30:00Z"},
+  "seven_day": {"utilization": 64.0, "resets_at": "2026-09-14T00:00:00Z"},
+  "extra_usage": {"is_enabled": true, "monthly_limit": 5000, "used_credits": 1250, "currency": "EUR", "utilization": 25.0},
+  "cedar_ember": {
+    "eligible": true,
+    "grants": [
+      {"id": "grant_a", "label": "Fixture reset", "resets_total": 2, "resets_left": 2,
+       "starts_at": "2026-09-01T00:00:00Z", "ends_at": "2026-09-20T00:00:00Z",
+       "clears": ["five_hour", "seven_day"], "paused": false, "usable_now": true},
+      {"id": "grant_b", "label": "Fixture reset", "resets_total": 1, "resets_left": 1,
+       "starts_at": "2026-09-01T00:00:00Z", "ends_at": "2026-09-12T00:00:00Z",
+       "clears": ["five_hour", "seven_day"], "paused": false, "usable_now": false},
+      {"id": "paused", "resets_total": 1, "resets_left": 1, "starts_at": "2026-09-01T00:00:00Z",
+       "ends_at": null, "paused": true},
+      {"id": "expired", "resets_total": 1, "resets_left": 1, "starts_at": "2026-08-01T00:00:00Z",
+       "ends_at": "2026-09-01T00:00:00Z", "paused": false},
+      {"id": "future", "resets_total": 1, "resets_left": 1, "starts_at": "2026-10-01T00:00:00Z",
+       "ends_at": "2026-10-30T00:00:00Z", "paused": false}
+    ]
+  }
+}

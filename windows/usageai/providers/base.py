@@ -32,6 +32,10 @@ class Provider:
         raise NotImplementedError
 
 
+# Funzioni chiamate con (url, testo) a ogni risposta 200 (es. il salvataggio delle risposte nuove).
+OSSERVATORI: list = []
+
+
 def request(http, url: str, headers: dict, auth_codes=(401, 403)):
     """GET con gestione errori comune. Restituisce (status, testo)."""
     try:
@@ -48,6 +52,11 @@ def request(http, url: str, headers: dict, auth_codes=(401, 403)):
         raise ApiError(f"Servizio non disponibile (HTTP {status}).", status, text)
     if status != 200:
         raise ApiError(f"Risposta inattesa (HTTP {status}).", status, text)
+    for osserva in list(OSSERVATORI):
+        try:
+            osserva(url, text)
+        except Exception:   # un problema di salvataggio non deve mai fermare il controllo
+            pass
     return status, text
 
 

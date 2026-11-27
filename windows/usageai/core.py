@@ -67,6 +67,7 @@ class Settings:
     auth_alerts_enabled: bool = True     # avviso quando l'accesso a un servizio scade
     disabled_providers: list[str] = field(default_factory=list)   # servizi spenti (credenziale tenuta)
     interval_min: int = 5      # solo Windows
+    record_responses: bool = True   # solo Windows: salva (pulite) le risposte con campi nuovi
 
 
 @dataclass

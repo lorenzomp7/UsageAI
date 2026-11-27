@@ -48,7 +48,7 @@ def test_claude_fetch_resolves_org_and_caches_it():
     cache = {}
     ws = BY_ID["claude"].fetch("sk-ant-sid01-abc", http, cache)
     assert len(ws) == 3 and cache["org_id"] == "max"
-    assert http.calls[1][0].endswith("/organizations/max/usage")
+    assert http.calls[1][0].endswith("/organizations/max/usage?cedar_ember=1")
     assert http.calls[1][1]["Cookie"] == "sessionKey=sk-ant-sid01-abc"
 
 

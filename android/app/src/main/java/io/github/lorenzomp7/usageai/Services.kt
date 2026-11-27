@@ -203,7 +203,7 @@ object ClaudeService : Service(
         }
         store.cache(id, "org")?.let { org ->
             try {
-                return Parsers.claude(getJson(http, "/organizations/$org/usage"))
+                return usage(http, store, org)
             } catch (e: AuthException) {
                 // organizzazione cambiata? la ricalcolo sotto
             } catch (e: ApiException) {
@@ -213,6 +213,22 @@ object ClaudeService : Service(
         val org = Parsers.claudeOrgId(getJson(http, "/organizations"))
             ?: throw ApiException("Nessuna organizzazione trovata per questo account")
         store.setCache(id, "org", org)
+        return usage(http, store, org)
+    }
+
+    /** Con ?cedar_ember=1 arrivano anche i reset dei limiti; se Claude lo rifiuta, richiedo senza (e lo ricordo). */
+    private suspend fun usage(http: Http, store: Store, org: String): List<UsageWindow> {
+        if (store.cache(id, "no_cedar_ember") == null) {
+            try {
+                return Parsers.claude(getJson(http, "/organizations/$org/usage?cedar_ember=1"))
+            } catch (e: ApiException) {
+                if (e.status == 429 || e.status >= 500 || e.status == 0) throw e
+                // Lo ricordo solo se senza il parametro funziona (un blocco di Cloudflare fallirebbe comunque).
+                val windows = Parsers.claude(getJson(http, "/organizations/$org/usage"))
+                store.setCache(id, "no_cedar_ember", "1")
+                return windows
+            }
+        }
         return Parsers.claude(getJson(http, "/organizations/$org/usage"))
     }
 }
@@ -345,6 +361,7 @@ object PerplexityService : Service(
     usagePage = "https://www.perplexity.ai/account/usage",
 ) {
     private const val URL = "https://www.perplexity.ai/rest/billing/credits?version=2.18&source=default"
+    private const val QUOTA_URL = "https://www.perplexity.ai/rest/billing/quota"
 
     override suspend fun fetch(http: Http, store: Store, credential: String): List<UsageWindow> {
         val viaWebView = credential == WEBVIEW_LOGIN
@@ -367,7 +384,17 @@ object PerplexityService : Service(
             if (r.status == 401 || r.status == 403) continue
             val body = Http.require(r)
             if (!viaWebView && '=' !in raw) store.setCache(id, "cookie_name", cookie.substringBefore('='))
-            return Parsers.perplexity(body)
+            val windows = Parsers.perplexity(body)
+            // Ricerche del mese: indirizzo dell'app di Perplexity, formato non documentato (lettura prudente).
+            if (store.cache(id, "no_quota") == null) {
+                val q = runCatching { http.fetch(QUOTA_URL, mapOf(
+                    "Accept" to "application/json", "Cookie" to cookie,
+                    "Origin" to "https://www.perplexity.ai", "Referer" to "https://www.perplexity.ai/account/usage",
+                ), viaWebView) }.getOrNull()
+                if (q?.status == 404 || q?.status == 405) store.setCache(id, "no_quota", "1")
+                if (q != null && q.status == 200) return Parsers.perplexityQuota(q.body) + windows
+            }
+            return windows
         }
         throw AuthException("Sessione di Perplexity scaduta: rifai l'accesso o copia di nuovo il cookie.")
     }

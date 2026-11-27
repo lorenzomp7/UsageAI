@@ -5,6 +5,11 @@ i crediti AI di Copilot, la quota di Perplexity, i limiti di grok.com (gRPC-web)
 serve una risposta vera. Questa procedura la registra dal browser del PC e la trasforma in una fixture
 pulita per i test di Android e Windows.
 
+**Di solito non serve far niente**: l'app Windows salva da sola, già pulita, ogni risposta con campi nuovi in
+`%APPDATA%\UsageAI\registrazioni` (menu dell'icona → «Cartella delle risposte salvate»). Per aggiungerle ai
+test basta copiare quei file in `fixtures/<servizio>/registrate/` ed eseguire `python tools\controlla_fixture.py`.
+La procedura con Proxelar qui sotto serve solo per ciò che l'app non chiama (per esempio i limiti di grok.com).
+
 Strumento: [Proxelar](https://github.com/emanuele-em/proxelar) (licenza MIT, gratis), un proxy locale che
 mostra e salva il traffico HTTPS. Tutto resta sul PC.
 

@@ -48,26 +48,134 @@ object Parsers {
 
     // ---------------- Claude ----------------
 
-    fun claude(json: String): List<UsageWindow> {
+    /**
+     * Claude. «limits» (session, weekly_all, weekly_scoped con il modello, es. Fable) come fonte principale e
+     * chiavi piatte per ciò che manca: dal parser e dai test di Usage Limits Mobile (MIT). «extra_usage» e
+     * «cedar_ember» (reset dei limiti): dalla documentazione di CodexBar (MIT). «pace»: formato non
+     * documentato, letto in modo prudente. Come windows/usageai/providers/claude.py.
+     */
+    fun claude(json: String, now: Instant = Instant.now()): List<UsageWindow> {
         val root = parseJson(json).obj() ?: return emptyList()
-        val out = mutableListOf<UsageWindow>()
+        val five = Duration.ofHours(5); val week = Duration.ofDays(7)
+        fun slug(s: String) = s.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifEmpty { "modello" }
+        fun title(s: String) = s.replace('_', ' ').trim().split(' ').filter { it.isNotEmpty() }
+            .joinToString(" ") { w -> w.lowercase().replaceFirstChar { it.uppercase() } }
+        fun pct(e: JsonElement?): Double? {
+            val p = e as? JsonPrimitive ?: return null
+            if (p is JsonNull || (!p.isString && p.booleanOrNull != null)) return null
+            return p.doubleOrNull
+        }
+        fun reset(o: JsonObject) = parseInstant((o["resets_at"] ?: o["resetsAt"]).str())
+        val found = linkedMapOf<String, UsageWindow>()
+
+        (root["limits"] as? JsonArray)?.mapNotNull { it.obj() }?.forEach { item ->
+            val p = pct(item["percent"]) ?: return@forEach
+            val kind = item["kind"].str() ?: ""
+            val group = item["group"].str() ?: ""
+            val model = item["scope"].obj()?.get("model").obj()?.get("display_name").str()?.trim()
+            val (key, label, length) = when {
+                kind == "session" -> Triple("claude:five_hour", "Sessione 5 ore", five)
+                kind == "weekly_all" -> Triple("claude:seven_day", "Settimana", week)
+                kind == "weekly_scoped" && !model.isNullOrEmpty() -> Triple("claude:seven_day_${slug(model)}", "Settimana $model", week)
+                kind.isNotEmpty() -> Triple("claude:${slug(kind)}", title(kind),
+                    if (group == "weekly") week else if (group == "session") five else null)
+                else -> return@forEach
+            }
+            if (key !in found) found[key] = UsageWindow("claude", key, label, p.coerceAtLeast(0.0), reset(item), length)
+        }
         for ((key, value) in root) {
-            if (key != "five_hour" && !key.startsWith("seven_day")) continue
+            if (key != "five_hour" && !key.startsWith("seven_day") && key != "iguana_necktie") continue
             val o = value.obj() ?: continue
             val prim = o["utilization"] as? JsonPrimitive ?: continue
-            if (prim.isString) continue
+            if (prim.isString || prim is JsonNull) continue
             val util = prim.doubleOrNull ?: continue
-            val (label, length) = when {
-                key == "five_hour" -> "Sessione 5 ore" to Duration.ofHours(5)
-                key == "seven_day" -> "Settimana" to Duration.ofDays(7)
-                else -> "Settimana " + key.removePrefix("seven_day_").replace('_', ' ').trim()
-                    .split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } } to Duration.ofDays(7)
+            val w = when (key) {
+                "five_hour" -> UsageWindow("claude", "claude:five_hour", "Sessione 5 ore", util.coerceAtLeast(0.0), reset(o), five)
+                "seven_day" -> UsageWindow("claude", "claude:seven_day", "Settimana", util.coerceAtLeast(0.0), reset(o), week)
+                "iguana_necktie" -> UsageWindow("claude", "claude:seven_day_fable", "Settimana Fable", util.coerceAtLeast(0.0), reset(o), week)
+                else -> UsageWindow("claude", "claude:$key", "Settimana " + title(key.removePrefix("seven_day_")),
+                    util.coerceAtLeast(0.0), reset(o), week)
             }
-            out += UsageWindow("claude", "claude:$key", label, util.coerceAtLeast(0.0),
-                parseInstant(o["resets_at"].str()), length)
+            if (w.key !in found) found[w.key] = w
         }
         val order = mapOf("claude:five_hour" to 0, "claude:seven_day" to 1)
-        return out.sortedWith(compareBy({ order[it.key] ?: 2 }, { it.key }))
+        val out = found.values.sortedWith(compareBy({ order[it.key] ?: 2 }, { it.key })).toMutableList()
+        if (out.isEmpty()) return out
+
+        root["extra_usage"].obj()?.let { ex ->
+            if ((ex["is_enabled"] as? JsonPrimitive)?.booleanOrNull != true) return@let
+            val limit = (ex["monthly_limit"]?.takeIf { it !is JsonNull } ?: ex["monthly_credit_limit"]).num()
+            val used = ex["used_credits"].num()
+            val p = if (used != null && limit != null && limit > 0) used / limit * 100 else pct(ex["utilization"])
+            if (p == null) return@let
+            val cur = (ex["currency"].str() ?: "USD").uppercase()
+            var label = "Spesa extra del mese"
+            if (used != null && limit != null && limit > 0)
+                label += " (${"%.2f".format(java.util.Locale.US, used / 100)} su ${"%.2f".format(java.util.Locale.US, limit / 100)} $cur)".replace('.', ',')
+            // Claude non dice quando si azzera: come CodexBar, il primo del mese successivo (UTC).
+            val first = now.atZone(ZoneOffset.UTC).toLocalDate().withDayOfMonth(1).atStartOfDay(ZoneOffset.UTC)
+            val next = first.plusMonths(1)
+            out += UsageWindow("claude", "claude:extra_usage", label, p.coerceAtLeast(0.0), next.toInstant(),
+                Duration.between(first, next))
+        }
+
+        val notes = mutableListOf<UsageWindow>()
+        for ((key, value) in root) {
+            val o = value.obj() ?: continue
+            val pace = o["pace"] ?: continue
+            val target = out.firstOrNull { it.key == "claude:$key" || (key == "iguana_necktie" && it.key == "claude:seven_day_fable") } ?: continue
+            claudePaceText(pace)?.let { notes += UsageWindow("claude", "${target.key}:pace", "Previsione di Claude (${target.label})", 0.0, null, null, note = it) }
+        }
+        claudeResets(root["cedar_ember"], now)?.let { notes += it }
+        return out + notes
+    }
+
+    private val PACE_PERCENT = listOf("projected_utilization", "projected_percent", "projected", "utilization_at_reset",
+        "percent_at_reset", "estimated_utilization")
+    private val PACE_TIME = listOf("runs_out_at", "exhausted_at", "exhausts_at", "depletes_at", "projected_exhaustion_at")
+
+    private fun claudePaceText(pace: JsonElement): String? {
+        val o = pace.obj()
+        if (o != null) {
+            for (k in PACE_TIME) parseInstant(o[k].str())?.let { t ->
+                val z = t.atZone(java.time.ZoneId.systemDefault())
+                return "finisce verso %02d/%02d %02d:%02d".format(z.dayOfMonth, z.monthValue, z.hour, z.minute)
+            }
+            for (k in PACE_PERCENT) {
+                val p = o[k] as? JsonPrimitive ?: continue
+                if (p is JsonNull || (!p.isString && p.booleanOrNull != null)) continue
+                p.doubleOrNull?.let { return "circa ${"%.0f".format(it)}% al reset" }
+            }
+            return (o["message"] ?: o["text"]).str()?.trim()?.takeIf { it.isNotEmpty() }
+        }
+        val s = pace.str()?.trim() ?: return null
+        return s.takeIf { it.isNotEmpty() && (' ' in it) }
+    }
+
+    /** Reset dei limiti disponibili dal blocco cedar_ember (regole di CodexBar). Solo lettura. */
+    private fun claudeResets(block: JsonElement?, now: Instant): UsageWindow? {
+        val b = block.obj() ?: return null
+        if ((b["eligible"] as? JsonPrimitive)?.let { !it.isString && it.booleanOrNull == true } != true) return null
+        val grants = b["grants"] as? JsonArray ?: return null
+        if (grants.size > 200) return null
+        var count = 0L
+        var firstEnd: Instant? = null
+        for (g in grants.mapNotNull { it.obj() }) {
+            val leftP = g["resets_left"] as? JsonPrimitive ?: continue
+            if (leftP.isString || leftP is JsonNull) continue
+            val left = leftP.contentOrNull?.toLongOrNull() ?: continue
+            val paused = g["paused"] as? JsonPrimitive
+            if (left < 0 || paused == null || paused.isString || paused.booleanOrNull != false) continue
+            val startsText = g["starts_at"].str(); val endsText = g["ends_at"].str()
+            val starts = if (startsText != null) parseInstant(startsText) ?: continue else null
+            val ends = if (endsText != null) parseInstant(endsText) ?: continue else null
+            if ((starts != null && starts.isAfter(now)) || (ends != null && !ends.isAfter(now)) || left == 0L) continue
+            count += left
+            if (ends != null && (firstEnd == null || ends.isBefore(firstEnd))) firstEnd = ends
+        }
+        if (count <= 0 || count > 50) return null
+        val tail = firstEnd?.atZone(java.time.ZoneId.systemDefault())?.let { " (il primo scade il %02d/%02d)".format(it.dayOfMonth, it.monthValue) } ?: ""
+        return UsageWindow("claude", "claude:resets", "Reset dei limiti disponibili", 0.0, null, null, note = "$count$tail")
     }
 
     fun claudeOrgId(json: String): String? {
@@ -253,6 +361,10 @@ object Parsers {
 
     // ---------------- Copilot ----------------
 
+    /**
+     * Copilot: crediti AI (dal 1/6/2026) o richieste premium. Campi da CodexBar (MIT): token_based_billing,
+     * credits_used, quote segnaposto a zero, monthly_quotas / limited_user_quotas come riserva.
+     */
     fun copilot(json: String): List<UsageWindow> {
         val root = parseJson(json).obj() ?: throw ApiException("Risposta di Copilot cambiata.")
         val snaps = (root["quota_snapshots"] ?: root["quotaSnapshots"]).obj() ?: JsonObject(emptyMap())
@@ -261,20 +373,45 @@ object Parsers {
             runCatching { LocalDate.parse(it).atStartOfDay().toInstant(ZoneOffset.UTC) }.getOrNull()
         }
         val length = reset?.let { monthLengthEndingAt(it) } ?: Duration.ofDays(30)
+        val credits = (root["token_based_billing"] as? JsonPrimitive)?.booleanOrNull == true
+        fun fmt(n: Double) = if (n == Math.floor(n)) "%.0f".format(n) else "%.1f".format(java.util.Locale.US, n).replace('.', ',')
         val out = mutableListOf<UsageWindow>()
-        for ((key, label) in listOf("premium_interactions" to "Richieste premium", "chat" to "Chat")) {
+        val notes = mutableListOf<UsageWindow>()
+        for ((key, label) in listOf("premium_interactions" to (if (credits) "Crediti AI del piano" else "Richieste premium"), "chat" to "Chat")) {
             val s = snaps[key].obj() ?: continue
+            val ent = s["entitlement"].num(); val rem = s["remaining"].num()
+            val usedCredits = s["credits_used"].num()
+            if (key == "premium_interactions" && usedCredits != null && (credits || usedCredits > 0)) {
+                notes += UsageWindow("copilot", "copilot:credits_used", "Crediti AI", 0.0, null, null,
+                    note = "${fmt(usedCredits)} usati" + (if (ent != null && ent > 0) " su ${fmt(ent)} compresi" else ""))
+                if (ent != null && ent > 0 && usedCredits > ent) {
+                    val until = reset?.atZone(java.time.ZoneId.systemDefault())?.let { ", fino al %02d/%02d".format(it.dayOfMonth, it.monthValue) } ?: ""
+                    notes += UsageWindow("copilot", "copilot:overage", "Uso aggiuntivo in corso", 0.0, null, null,
+                        note = "${fmt(usedCredits - ent)} crediti oltre i compresi$until")
+                }
+            }
             if ((s["unlimited"] as? JsonPrimitive)?.booleanOrNull == true) continue
+            if (credits && ent == 0.0 && (rem == null || rem == 0.0)) continue   // quota finta a zero
             var remaining = s["percent_remaining"].num()
             if (remaining == null) {
-                val ent = s["entitlement"].num(); val rem = s["remaining"].num()
                 if (ent == null || ent <= 0 || rem == null) continue
                 remaining = rem / ent * 100
             }
             out += UsageWindow("copilot", "copilot:$key", label, (100 - remaining).coerceAtLeast(0.0), reset, length)
         }
-        if (out.isEmpty()) throw ApiException("Copilot non riporta limiti per questo account (piano illimitato o senza Copilot).")
-        return out
+        if (out.isEmpty()) {
+            val monthly = root["monthly_quotas"].obj(); val left = root["limited_user_quotas"].obj()
+            if (monthly != null && left != null) for (k in listOf("premium_interactions", "completions", "chat")) {
+                val total = monthly[k].num(); val rest = left[k].num()
+                if (total != null && total > 0 && rest != null) {
+                    out += UsageWindow("copilot", "copilot:monthly", "Quota del mese",
+                        ((total - rest) / total * 100).coerceIn(0.0, 100.0), reset, length)
+                    break
+                }
+            }
+        }
+        if (out.isEmpty() && notes.isEmpty()) throw ApiException("Copilot non riporta limiti per questo account (piano illimitato o senza Copilot).")
+        return out + notes
     }
 
     // ---------------- Perplexity ----------------
@@ -310,6 +447,40 @@ object Parsers {
         if (promo > 0) out += UsageWindow("perplexity", "perplexity:promo", "Crediti bonus",
             (promoUsed / promo * 100).coerceAtMost(100.0), null, null)
         if (out.isEmpty()) throw ApiException("Perplexity non riporta crediti per questo account.")
+        val expiring = grants.mapNotNull { it.obj() }.mapNotNull { g ->
+            val exp = (g["expires_at_ts"] ?: g["expiresAtTs"]).num(); val amount = (g["amount_cents"] ?: g["amountCents"]).num()
+            if (exp != null && exp > now.epochSecond && amount != null && amount > 0) exp to amount else null
+        }
+        if (expiring.isNotEmpty()) {
+            val exp = expiring.minOf { it.first }
+            val amount = expiring.filter { it.first == exp }.sumOf { it.second }
+            val z = Instant.ofEpochSecond(exp.toLong()).atZone(java.time.ZoneId.systemDefault())
+            out += UsageWindow("perplexity", "perplexity:expiring", "Crediti in scadenza", 0.0, null, null,
+                note = "${"%.2f".format(java.util.Locale.US, amount / 100).replace('.', ',')} $ scadono il %02d/%02d".format(z.dayOfMonth, z.monthValue))
+        }
+        return out
+    }
+
+    /** /rest/billing/quota: formato non documentato, lettura prudente (vuoto se non riconosciuto). */
+    fun perplexityQuota(json: String): List<UsageWindow> {
+        val root = runCatching { parseJson(json).obj() }.getOrNull() ?: return emptyList()
+        val candidates = listOf("" to root) + root.entries.mapNotNull { (k, v) -> v.obj()?.let { k to it } }
+        val out = mutableListOf<UsageWindow>()
+        for ((name, d) in candidates) {
+            val total = listOf("limit", "total", "quota", "max", "monthly_limit", "monthlyLimit", "allowance")
+                .firstNotNullOfOrNull { d[it].num() } ?: continue
+            if (total <= 0) continue
+            val rem = listOf("remaining", "queries_remaining", "remaining_queries", "remainingQueries", "queriesRemaining", "left")
+                .firstNotNullOfOrNull { d[it].num() }
+            val used = listOf("used", "queries_used", "usage", "count", "consumed").firstNotNullOfOrNull { d[it].num() }
+                ?: rem?.let { total - it } ?: continue
+            val reset = listOf("reset_at", "resets_at", "reset_ts", "reset_date_ts", "resetAt", "resetsAt", "renewal_date_ts")
+                .firstNotNullOfOrNull { k -> fromEpoch(d[k]) ?: parseInstant(d[k].str()) }
+            out += UsageWindow("perplexity", "perplexity:quota" + (if (name.isNotEmpty()) ":$name" else ""),
+                "Ricerche del mese" + (if (name.isNotEmpty()) " (${name.replace('_', ' ')})" else ""),
+                (used / total * 100).coerceIn(0.0, 100.0), reset, if (reset != null) Duration.ofDays(30) else null)
+            if (name.isEmpty()) break
+        }
         return out
     }
 

@@ -177,4 +177,61 @@ class UsageLogicTest {
             .single().utilization, 0.001)
         assertThrows<ApiException> { Parsers.copilot("""{"quota_snapshots":{"chat":{"unlimited":true}}}""") }
     }
+
+    @Test fun perplexity() {
+        val json = """{"balance_cents":1500,"renewal_date_ts":1767225600,"current_period_purchased_cents":0,
+            "total_usage_cents":3500,"credit_grants":[{"type":"recurring","amount_cents":5000},
+            {"type":"promotional","amount_cents":1000,"expires_at_ts":1893456000},
+            {"type":"promotional","amount_cents":9999,"expires_at_ts":1000}]}"""
+        val ws = Parsers.perplexity(json, now).associateBy { it.key }
+        assertEquals(70.0, ws["perplexity:recurring"]!!.utilization, 0.001)
+        assertEquals(Instant.ofEpochSecond(1767225600), ws["perplexity:recurring"]!!.resetsAt)
+        assertEquals(0.0, ws["perplexity:promo"]!!.utilization, 0.001)
+        val more = Parsers.perplexity(json.replace("3500", "5500"), now).associateBy { it.key }
+        assertEquals(50.0, more["perplexity:promo"]!!.utilization, 0.001)
+    }
+
+    @Test fun grok() {
+        val w = Parsers.grok("""{"config":{"creditUsagePercent":37.5,
+            "currentPeriod":{"start":"2026-11-23T00:00:00Z","end":"2026-11-30T00:00:00Z"},"prepaidBalance":{"val":0}}}""").single()
+        assertEquals(37.5, w.utilization, 0.001)
+        assertEquals("Crediti · Settimana", w.label)
+        val alt = Parsers.grok("""{"config":{"onDemandCap":{"val":2000},"onDemandUsed":{"val":500},
+            "billingPeriodStart":"2026-11-01T00:00:00Z","billingPeriodEnd":"2026-12-01T00:00:00Z"}}""").single()
+        assertEquals(25.0, alt.utilization, 0.001)
+        assertEquals("Crediti · Mese", alt.label)
+        assertThrows<ApiException> { Parsers.grok("""{"config":{"currentPeriod":{"end":"2026-11-30T00:00:00Z"}}}""") }
+    }
+
+    @Test fun mistral() {
+        val budget = """{"subscription":{"budget":{"api_budget":{"usage_percentage":42.0,"initial_budget":15,
+            "currency":"eur","reset_at":"2026-12-01T00:00:00Z"},"vibe_budget":{"usage_percentage":80,
+            "initial_budget":10,"currency":"eur","reset_at":null}}}}""".replace("\n", "")
+        val flight = "0:[\"\$\",\"div\",null,{}]\n5:" + budget + "\n"
+        val encoded = kotlinx.serialization.json.JsonPrimitive(flight).toString()
+        val html = "<html><script>self.__next_f.push([1,$encoded])</script><script>self.__next_f.push([2,null])</script></html>"
+        val ws = Parsers.mistralHtml(html).associateBy { it.key }
+        assertEquals(42.0, ws["mistral:api_budget"]!!.utilization, 0.001)
+        assertEquals("Budget API incluso (15 EUR)", ws["mistral:api_budget"]!!.label)
+        assertEquals(Duration.ofDays(30), ws["mistral:api_budget"]!!.length)
+        assertNull(ws["mistral:vibe_budget"]!!.resetsAt)
+        assertThrows<AuthException> { Parsers.mistralHtml("""<a href="https://auth.mistral.ai/self-service/login">Login</a>""") }
+        assertThrows<ApiException> { Parsers.mistralHtml("<html>niente</html>") }
+    }
+
+    @Test fun openRouter() {
+        val (daily, dayLen) = Parsers.openRouterNextReset("daily", now)
+        assertEquals(Instant.parse("2026-11-28T00:00:00Z"), daily); assertEquals(Duration.ofDays(1), dayLen)
+        assertEquals(Instant.parse("2026-11-30T00:00:00Z"), Parsers.openRouterNextReset("weekly", now).first)
+        val (monthly, monthLen) = Parsers.openRouterNextReset("monthly", now)
+        assertEquals(Instant.parse("2026-12-01T00:00:00Z"), monthly); assertEquals(Duration.ofDays(30), monthLen)
+        val w = Parsers.openRouterKey("""{"data":{"limit":50,"limit_remaining":12.5,"limit_reset":"monthly","usage":100}}""", now).single()
+        assertEquals(75.0, w.utilization, 0.001)
+        assertEquals("Limite della chiave (50 $)", w.label)
+        assertTrue(Parsers.openRouterKey("""{"data":{"limit":null,"usage":3}}""", now).isEmpty())
+        val c = Parsers.openRouterCredits("""{"data":{"total_credits":20,"total_usage":5}}""").single()
+        assertEquals(25.0, c.utilization, 0.001)
+        assertTrue(c.label, c.label.contains("15.00 $"))
+        assertTrue(Parsers.openRouterCredits("""{"error":"forbidden"}""").isEmpty())
+    }
 }

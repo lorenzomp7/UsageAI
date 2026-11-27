@@ -45,6 +45,10 @@ val PROVIDER_NAMES = linkedMapOf(
     "gemini" to "Gemini",
     "cursor" to "Cursor",
     "copilot" to "Copilot",
+    "perplexity" to "Perplexity",
+    "grok" to "Grok",
+    "mistral" to "Mistral",
+    "openrouter" to "OpenRouter",
 )
 
 data class UsageWindow(
@@ -96,6 +100,12 @@ fun windowLabel(length: Duration?): String {
         hours < 48 -> "Finestra ${hours.roundToInt()} ore"
         else -> "Finestra ${(hours / 24).roundToInt()} giorni"
     }
+}
+
+/** Durata del periodo mensile che finisce in [end] (stesso giorno del mese prima, o l'ultimo disponibile). */
+fun monthLengthEndingAt(end: Instant): Duration {
+    val z = end.atZone(java.time.ZoneOffset.UTC)
+    return Duration.between(z.minusMonths(1), z)
 }
 
 fun expectedUtilization(w: UsageWindow, now: Instant): Double? {

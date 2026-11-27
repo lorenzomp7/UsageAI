@@ -184,10 +184,7 @@ object Parsers {
         val reset = parseInstant(resetRaw) ?: resetRaw?.trim()?.take(10)?.let {
             runCatching { LocalDate.parse(it).atStartOfDay().toInstant(ZoneOffset.UTC) }.getOrNull()
         }
-        val length = reset?.let {
-            val end = it.atZone(ZoneOffset.UTC)
-            Duration.between(end.minusMonths(1), end)
-        } ?: Duration.ofDays(30)
+        val length = reset?.let { monthLengthEndingAt(it) } ?: Duration.ofDays(30)
         val out = mutableListOf<UsageWindow>()
         for ((key, label) in listOf("premium_interactions" to "Richieste premium", "chat" to "Chat")) {
             val s = snaps[key].obj() ?: continue
@@ -202,5 +199,178 @@ object Parsers {
         }
         if (out.isEmpty()) throw ApiException("Copilot non riporta limiti per questo account (piano illimitato o senza Copilot).")
         return out
+    }
+
+    // ---------------- Perplexity ----------------
+
+    fun perplexity(json: String, now: Instant = Instant.now()): List<UsageWindow> {
+        val d = parseJson(json).obj() ?: throw ApiException("Risposta di Perplexity cambiata.")
+        fun f(snake: String, camel: String) = d[snake] ?: d[camel]
+        val grants = f("credit_grants", "creditGrants") as? JsonArray
+        val used = f("total_usage_cents", "totalUsageCents").num()
+        if (grants == null || used == null) throw ApiException("Risposta di Perplexity cambiata.")
+        fun total(kind: String, onlyValid: Boolean = false): Double = grants.mapNotNull { it.obj() }
+            .filter { it["type"].str() == kind }
+            .filter { g ->
+                val exp = (g["expires_at_ts"] ?: g["expiresAtTs"]).num()
+                !onlyValid || exp == null || exp > now.epochSecond
+            }
+            .sumOf { (it["amount_cents"] ?: it["amountCents"]).num() ?: 0.0 }
+            .coerceAtLeast(0.0)
+        val recurring = total("recurring")
+        val promo = total("promotional", onlyValid = true)
+        val purchased = maxOf(total("purchased"), f("current_period_purchased_cents", "currentPeriodPurchasedCents").num() ?: 0.0)
+        val recUsed = minOf(used, recurring)
+        var left = used - recUsed
+        val purUsed = minOf(left, purchased)
+        left -= purUsed
+        val promoUsed = minOf(left, promo)
+        val renewal = fromEpoch(f("renewal_date_ts", "renewalDateTs"))
+        val out = mutableListOf<UsageWindow>()
+        if (recurring > 0) out += UsageWindow("perplexity", "perplexity:recurring", "Crediti del piano",
+            (recUsed / recurring * 100).coerceAtMost(100.0), renewal, null)
+        if (purchased > 0) out += UsageWindow("perplexity", "perplexity:purchased", "Crediti acquistati",
+            (purUsed / purchased * 100).coerceAtMost(100.0), null, null)
+        if (promo > 0) out += UsageWindow("perplexity", "perplexity:promo", "Crediti bonus",
+            (promoUsed / promo * 100).coerceAtMost(100.0), null, null)
+        if (out.isEmpty()) throw ApiException("Perplexity non riporta crediti per questo account.")
+        return out
+    }
+
+    // ---------------- Grok ----------------
+
+    fun grok(json: String): List<UsageWindow> {
+        val config = parseJson(json).obj()?.get("config").obj() ?: throw ApiException("Risposta di Grok cambiata.")
+        fun amount(e: JsonElement?): Double? = e.obj()?.get("val").num() ?: e.num()
+        var percent = config["creditUsagePercent"].num()
+        if (percent == null) {
+            val cap = amount(config["onDemandCap"]); val used = amount(config["onDemandUsed"])
+            if (cap != null && cap > 0 && used != null) percent = used / cap * 100
+        }
+        val period = config["currentPeriod"].obj()
+        var end = parseInstant(period?.get("end").str())
+        val start = if (end != null) parseInstant(period?.get("start").str()) else parseInstant(config["billingPeriodStart"].str())
+        if (end == null) end = parseInstant(config["billingPeriodEnd"].str())
+        val length = if (start != null && end != null && end.isAfter(start)) Duration.between(start, end) else null
+        if (percent == null) throw ApiException("Grok non riporta la percentuale di consumo per questo periodo.")
+        return listOf(UsageWindow("grok", "grok:credits", if (length != null) "Crediti · ${windowLabel(length)}" else "Crediti",
+            percent.coerceIn(0.0, 100.0), end, length))
+    }
+
+    // ---------------- Mistral ----------------
+
+    /** Indice subito dopo la fine dell'oggetto/array JSON che comincia in [start], o null. */
+    private fun jsonEnd(text: String, start: Int): Int? {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var i = start
+        while (i < text.length) {
+            val c = text[i]
+            if (inString) {
+                if (escaped) escaped = false
+                else if (c == '\\') escaped = true
+                else if (c == '"') inString = false
+            } else when (c) {
+                '"' -> inString = true
+                '[', '{' -> depth++
+                ']', '}' -> { depth--; if (depth == 0) return i + 1 }
+            }
+            i++
+        }
+        return null
+    }
+
+    private fun flightStream(html: String): String {
+        val sb = StringBuilder()
+        val marker = "self.__next_f.push("
+        var from = 0
+        while (true) {
+            val m = html.indexOf(marker, from)
+            if (m < 0) break
+            var start = m + marker.length
+            while (start < html.length && html[start].isWhitespace()) start++
+            from = start
+            if (start >= html.length || html[start] != '[') continue
+            val end = jsonEnd(html, start) ?: continue
+            val arr = runCatching { Json.parseToJsonElement(html.substring(start, end)) as? JsonArray }.getOrNull()
+            if (arr != null && arr.size >= 2 && arr[0].num() == 1.0) arr[1].str()?.let { sb.append(it) }
+            from = end
+        }
+        return sb.toString()
+    }
+
+    private fun findBudget(text: String, key: String): JsonObject? {
+        val re = Regex("\"" + Regex.escape(key) + "\"\\s*:\\s*\\{")
+        for (m in re.findAll(text)) {
+            val start = m.range.last
+            val end = jsonEnd(text, start) ?: continue
+            val o = runCatching { Json.parseToJsonElement(text.substring(start, end)).obj() }.getOrNull() ?: continue
+            if (o["usage_percentage"].num() != null) return o
+        }
+        return null
+    }
+
+    fun mistralHtml(html: String): List<UsageWindow> {
+        val out = mutableListOf<UsageWindow>()
+        for (source in listOf(flightStream(html), html)) {
+            for ((key, label) in listOf("api_budget" to "Budget API incluso", "vibe_budget" to "Vibe (piano mensile)")) {
+                if (out.any { it.key == "mistral:$key" }) continue
+                val b = findBudget(source, key) ?: continue
+                val pct = b["usage_percentage"].num() ?: continue
+                val limit = b["initial_budget"].num()
+                if (limit != null && limit <= 0) continue
+                val reset = parseInstant(b["reset_at"].str())
+                val currency = (b["currency"].str() ?: "").uppercase()
+                val text = if (limit != null && limit > 0) "$label (${"%.0f".format(limit)} $currency)".replace(" )", ")") else label
+                out += UsageWindow("mistral", "mistral:$key", text, pct.coerceIn(0.0, 100.0), reset, reset?.let { monthLengthEndingAt(it) })
+            }
+            if (out.isNotEmpty()) break
+        }
+        if (out.isEmpty()) {
+            val low = html.lowercase()
+            if ("auth.mistral.ai" in low && ("login" in low || "sign in" in low))
+                throw AuthException("Sessione di Mistral scaduta: rifai l'accesso.")
+            throw ApiException("La pagina abbonamento di Mistral non mostra budget inclusi (o è cambiata).")
+        }
+        return out
+    }
+
+    // ---------------- OpenRouter ----------------
+
+    /** OpenRouter azzera i limiti a mezzanotte UTC: ogni giorno, ogni lunedì o il primo del mese. */
+    fun openRouterNextReset(kind: String?, now: Instant): Pair<Instant?, Duration?> {
+        val midnight = now.atZone(ZoneOffset.UTC).toLocalDate().atStartOfDay(ZoneOffset.UTC)
+        return when (kind) {
+            "daily" -> midnight.plusDays(1).toInstant() to Duration.ofDays(1)
+            "weekly" -> midnight.plusDays((7 - (midnight.dayOfWeek.value - 1)).toLong()).toInstant() to Duration.ofDays(7)
+            "monthly" -> {
+                val next = midnight.withDayOfMonth(1).plusMonths(1).toInstant()
+                next to monthLengthEndingAt(next)
+            }
+            else -> null to null
+        }
+    }
+
+    fun openRouterKey(json: String, now: Instant = Instant.now()): List<UsageWindow> {
+        val d = parseJson(json).obj()?.get("data").obj() ?: throw ApiException("Risposta di OpenRouter cambiata.")
+        val limit = d["limit"].num()
+        if (limit == null || limit <= 0) return emptyList()
+        val kind = d["limit_reset"].str()
+        val remaining = d["limit_remaining"].num()
+        val used = if (remaining != null) limit - remaining else
+            d[when (kind) { "daily" -> "usage_daily"; "weekly" -> "usage_weekly"; "monthly" -> "usage_monthly"; else -> "usage" }].num() ?: 0.0
+        val (reset, length) = openRouterNextReset(kind, now)
+        return listOf(UsageWindow("openrouter", "openrouter:key", "Limite della chiave (${"%.0f".format(limit)} $)",
+            (used / limit * 100).coerceIn(0.0, 100.0), reset, length))
+    }
+
+    fun openRouterCredits(json: String): List<UsageWindow> {
+        val d = runCatching { parseJson(json).obj()?.get("data").obj() }.getOrNull() ?: return emptyList()
+        val total = d["total_credits"].num(); val used = d["total_usage"].num()
+        if (total == null || total <= 0 || used == null) return emptyList()
+        return listOf(UsageWindow("openrouter", "openrouter:credits",
+            "Credito prepagato (restano ${"%.2f".format(java.util.Locale.US, total - used)} $)",
+            (used / total * 100).coerceIn(0.0, 100.0), null, null))
     }
 }

@@ -20,6 +20,10 @@ PROVIDER_NAMES = {
     "gemini": "Gemini",
     "cursor": "Cursor",
     "copilot": "Copilot",
+    "perplexity": "Perplexity",
+    "grok": "Grok",
+    "mistral": "Mistral",
+    "openrouter": "OpenRouter",
 }
 
 
@@ -89,6 +93,17 @@ def window_label(length: timedelta | None) -> str:
     if hours < 48:
         return f"Finestra {hours:.0f} ore"
     return f"Finestra {hours / 24:.0f} giorni"
+
+
+def month_before(end: datetime) -> datetime:
+    """Stesso giorno del mese precedente (per stimare l'inizio di un periodo mensile)."""
+    year, month = (end.year, end.month - 1) if end.month > 1 else (end.year - 1, 12)
+    for day in (end.day, 30, 29, 28):
+        try:
+            return end.replace(year=year, month=month, day=day)
+        except ValueError:
+            continue
+    return end
 
 
 def expected_utilization(window: Window, now: datetime) -> float | None:

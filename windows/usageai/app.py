@@ -17,6 +17,10 @@ USAGE_PAGES = {
     "gemini": "https://gemini.google.com/usage",
     "cursor": "https://cursor.com/dashboard",
     "copilot": "https://github.com/settings/copilot",
+    "perplexity": "https://www.perplexity.ai/account/usage",
+    "grok": "https://grok.com",
+    "mistral": "https://admin.mistral.ai/subscription",
+    "openrouter": "https://openrouter.ai/activity",
 }
 log = logging.getLogger("usageai")
 

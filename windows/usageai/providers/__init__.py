@@ -5,6 +5,10 @@ from .codex import CodexProvider
 from .copilot import CopilotProvider
 from .cursor import CursorProvider
 from .gemini import GeminiProvider
+from .grok import GrokProvider
+from .mistral import MistralProvider
+from .openrouter import OpenRouterProvider
+from .perplexity import PerplexityProvider
 
 PROVIDERS: list[Provider] = [
     ClaudeProvider(),
@@ -12,6 +16,10 @@ PROVIDERS: list[Provider] = [
     GeminiProvider(),
     CursorProvider(),
     CopilotProvider(),
+    PerplexityProvider(),
+    GrokProvider(),
+    MistralProvider(),
+    OpenRouterProvider(),
 ]
 BY_ID = {p.id: p for p in PROVIDERS}
 

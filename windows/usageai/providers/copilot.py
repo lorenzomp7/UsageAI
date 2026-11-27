@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from ..core import Window, parse_datetime
+from ..core import Window, month_before, parse_datetime
 from .base import ApiError, Provider, number, parse_json, request
 
 URL = "https://api.github.com/copilot_internal/user"
@@ -22,14 +22,7 @@ def _reset(value) -> datetime | None:
 
 
 def _month_length(reset: datetime | None) -> timedelta:
-    if reset is None:
-        return timedelta(days=30)
-    year, month = (reset.year, reset.month - 1) if reset.month > 1 else (reset.year - 1, 12)
-    try:
-        start = reset.replace(year=year, month=month)
-    except ValueError:            # es. 31 marzo -> 28/29 febbraio
-        start = reset.replace(year=year, month=month, day=28)
-    return reset - start
+    return reset - month_before(reset) if reset else timedelta(days=30)
 
 
 def parse(data: dict) -> list[Window]:

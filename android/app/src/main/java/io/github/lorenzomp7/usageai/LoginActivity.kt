@@ -54,10 +54,11 @@ class LoginActivity : Activity() {
 
     private fun sessionCookie(): String? {
         val host = service.cookieUrl ?: return null
-        val name = service.loginCookie ?: return null
         val cookies = CookieManager.getInstance().getCookie(host) ?: return null
-        return cookies.split(";").map { it.trim() }
-            .firstOrNull { it.startsWith("$name=") || it.startsWith("$name.0=") }
+        // Il nome può essere un prefisso (es. «ory_session_» di Mistral) o diviso in pezzi «.0», «.1».
+        return cookies.split(";").map { it.trim() }.firstOrNull { c ->
+            service.loginCookies.any { name -> c.startsWith(name) && '=' in c }
+        }
     }
 
     private fun checkForSession(url: String) {

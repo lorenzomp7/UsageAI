@@ -37,7 +37,7 @@ jobs:
               --json headSha --jq '.[0].headSha // ""')
             if [ "$last" = "$head" ]; then echo "$workflow: già compilato $head"; return; fi
             if [ -n "$last" ] && git cat-file -e "$last" 2>/dev/null \
-               && git diff --quiet "$last" "$head" -- "$dir" ".github/workflows/$workflow"; then
+               && git diff --quiet "$last" "$head" -- "$dir" fixtures tools ".github/workflows/$workflow"; then
               echo "$workflow: nessuna modifica in $dir da $last"; return
             fi
             echo "$workflow: avvio la build di $head"

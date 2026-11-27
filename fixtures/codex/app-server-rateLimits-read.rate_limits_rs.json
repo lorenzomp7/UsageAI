@@ -1,0 +1,87 @@
+{
+  "rateLimits": {
+    "limitId": "codex",
+    "limitName": null,
+    "primary": {
+      "usedPercent": 42,
+      "windowDurationMins": 60,
+      "resetsAt": 1735689720
+    },
+    "secondary": {
+      "usedPercent": 5,
+      "windowDurationMins": 1440,
+      "resetsAt": 1735693200
+    },
+    "credits": null,
+    "individualLimit": {
+      "limit": "25000",
+      "used": "8000",
+      "remainingPercent": 68,
+      "resetsAt": 1735693200
+    },
+    "planType": "pro",
+    "rateLimitReachedType": "workspace_member_usage_limit_reached"
+  },
+  "rateLimitsByLimitId": {
+    "codex": {
+      "limitId": "codex",
+      "limitName": null,
+      "primary": {
+        "usedPercent": 42,
+        "windowDurationMins": 60,
+        "resetsAt": 1735689720
+      },
+      "secondary": {
+        "usedPercent": 5,
+        "windowDurationMins": 1440,
+        "resetsAt": 1735693200
+      },
+      "credits": null,
+      "individualLimit": {
+        "limit": "25000",
+        "used": "8000",
+        "remainingPercent": 68,
+        "resetsAt": 1735693200
+      },
+      "planType": "pro",
+      "rateLimitReachedType": "workspace_member_usage_limit_reached"
+    },
+    "codex_other": {
+      "limitId": "codex_other",
+      "limitName": "codex_other",
+      "primary": {
+        "usedPercent": 88,
+        "windowDurationMins": 30,
+        "resetsAt": 1735693200
+      },
+      "secondary": null,
+      "credits": null,
+      "individualLimit": null,
+      "planType": "pro",
+      "rateLimitReachedType": null
+    }
+  },
+  "rateLimitResetCredits": {
+    "availableCount": 2,
+    "credits": [
+      {
+        "id": "credit-1",
+        "resetType": "codexRateLimits",
+        "status": "available",
+        "grantedAt": 1781654400,
+        "expiresAt": 1784246400,
+        "title": "Full reset (Weekly + 5 hr)",
+        "description": "Ready to redeem"
+      },
+      {
+        "id": "credit-2",
+        "resetType": "unknown",
+        "status": "unknown",
+        "grantedAt": 1781740800,
+        "expiresAt": null,
+        "title": null,
+        "description": null
+      }
+    ]
+  }
+}

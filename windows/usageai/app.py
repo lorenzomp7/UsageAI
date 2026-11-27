@@ -132,7 +132,8 @@ class UsageApp:
                 log.exception("notifica non mostrata")
 
     def all_windows(self) -> list[Window]:
-        return [w for p in self.providers for w in self.windows.get(p.id, [])]
+        """Solo le finestre con una percentuale (le righe informative restano fuori)."""
+        return [w for p in self.providers for w in self.windows.get(p.id, []) if not w.is_info]
 
     def headline(self) -> tuple[float | None, float | None]:
         """(numero sull'icona, valore per il colore): il periodo lungo più consumato e il massimo assoluto."""
@@ -146,7 +147,7 @@ class UsageApp:
     def tooltip(self) -> str:
         parts = []
         for p in self.providers:
-            ws = self.windows.get(p.id)
+            ws = [w for w in self.windows.get(p.id, []) if not w.is_info]
             if ws:
                 parts.append(f"{p.name} {max(w.utilization for w in ws):.0f}%")
             elif p.id in self.errors:
@@ -165,6 +166,9 @@ class UsageApp:
                 continue
             lines.append(p.name)
             for w in ws:
+                if w.is_info:
+                    lines.append(f"   {w.label}: {w.note}")
+                    continue
                 lines.append(f"   {w.label}: {w.utilization:.0f}% · {format_reset(w.resets_at, now)}")
                 if w.is_long:
                     pt = pace_text(w, now)

@@ -11,8 +11,8 @@ android {
         applicationId = "io.github.lorenzomp7.usageai"
         minSdk = 29
         targetSdk = 35
-        versionCode = 5
-        versionName = "2.3"
+        versionCode = 6
+        versionName = "2.4"
     }
 
     // Chiave di firma fissa nella repo: ogni build di GitHub Actions si installa sopra la precedente

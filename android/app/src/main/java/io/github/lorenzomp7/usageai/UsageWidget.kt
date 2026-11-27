@@ -34,7 +34,8 @@ class UsageWidget : AppWidgetProvider() {
 
         /** La finestra più consumata di ogni servizio; se sono più di 4, le 4 più alte. */
         fun headline(windows: List<UsageWindow>): List<UsageWindow> {
-            val perProvider = windows.groupBy { it.provider }.values.map { ws -> ws.maxByOrNull { it.utilization }!! }
+            val perProvider = windows.filter { !it.isInfo }.groupBy { it.provider }.values
+                .map { ws -> ws.maxByOrNull { it.utilization }!! }
             val top = perProvider.sortedByDescending { it.utilization }.take(ROWS.size).toSet()
             return perProvider.filter { it in top }
         }

@@ -6,6 +6,7 @@ from .copilot import CopilotProvider
 from .cursor import CursorProvider
 from .gemini import GeminiProvider
 from .grok import GrokProvider
+from .kimi import KimiProvider
 from .mistral import MistralProvider
 from .openrouter import OpenRouterProvider
 from .perplexity import PerplexityProvider
@@ -20,6 +21,7 @@ PROVIDERS: list[Provider] = [
     GrokProvider(),
     MistralProvider(),
     OpenRouterProvider(),
+    KimiProvider(),
 ]
 BY_ID = {p.id: p for p in PROVIDERS}
 

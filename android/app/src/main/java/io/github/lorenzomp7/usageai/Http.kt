@@ -42,7 +42,13 @@ class Http(private val context: Context) {
     private suspend fun userAgent(): String = withContext(Dispatchers.Main) { WebSettings.getDefaultUserAgent(context) }
 
     /** GET semplice. Non lancia per i codici HTTP, solo per la rete. */
-    suspend fun get(url: String, headers: Map<String, String>): Resp {
+    suspend fun get(url: String, headers: Map<String, String>): Resp = request("GET", url, headers, null)
+
+    /** POST con corpo (JSON o modulo). Non lancia per i codici HTTP, solo per la rete. */
+    suspend fun post(url: String, headers: Map<String, String>, body: String, contentType: String): Resp =
+        request("POST", url, headers + ("Content-Type" to contentType), body)
+
+    private suspend fun request(method: String, url: String, headers: Map<String, String>, body: String?): Resp {
         val ua = userAgent()
         return withContext(Dispatchers.IO) {
             val conn = URL(url).openConnection() as HttpURLConnection
@@ -50,8 +56,13 @@ class Http(private val context: Context) {
                 conn.connectTimeout = 20_000
                 conn.readTimeout = 20_000
                 conn.instanceFollowRedirects = true
+                conn.requestMethod = method
                 conn.setRequestProperty("User-Agent", ua)
                 headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
+                if (body != null) {
+                    conn.doOutput = true
+                    conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                }
                 val status = conn.responseCode
                 val stream = if (status >= 400) conn.errorStream else conn.inputStream
                 Resp(status, stream?.bufferedReader()?.use { it.readText() } ?: "")

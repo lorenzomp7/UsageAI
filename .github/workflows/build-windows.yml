@@ -2,10 +2,10 @@ name: Build Windows
 
 on:
   push:
-    branches: [main]
-    paths: ["windows/**", ".github/workflows/build-windows.yml"]
+    branches: [main, main_claude]
+    paths: ["windows/**", "fixtures/**", "tools/**", ".github/workflows/build-windows.yml"]
   pull_request:
-    paths: ["windows/**"]
+    paths: ["windows/**", "fixtures/**", "tools/**"]
   workflow_dispatch:
 
 permissions:

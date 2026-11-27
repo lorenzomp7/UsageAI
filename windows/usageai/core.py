@@ -24,6 +24,7 @@ PROVIDER_NAMES = {
     "grok": "Grok",
     "mistral": "Mistral",
     "openrouter": "OpenRouter",
+    "kimi": "Kimi Code",
 }
 
 
@@ -35,6 +36,13 @@ class Window:
     utilization: float        # 0-100
     resets_at: datetime | None
     length: timedelta | None  # durata della finestra, se nota
+    # Riga solo informativa (es. crediti rimasti, reset disponibili): niente percentuale,
+    # niente avvisi, non conta per il numero sull'icona. Il testo da mostrare è qui.
+    note: str | None = None
+
+    @property
+    def is_info(self) -> bool:
+        return self.note is not None
 
     @property
     def is_long(self) -> bool:
@@ -224,6 +232,8 @@ def evaluate(windows: list[Window], settings: Settings,
     today = now.astimezone(tz).date().isoformat()
 
     for w in windows:
+        if w.is_info:
+            continue
         old = state.get(w.key)
         new_window = old is None or not _same_window(old.resets_at, w.resets_at)
         if new_window:

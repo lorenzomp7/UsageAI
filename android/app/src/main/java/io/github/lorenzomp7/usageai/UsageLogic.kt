@@ -49,6 +49,7 @@ val PROVIDER_NAMES = linkedMapOf(
     "grok" to "Grok",
     "mistral" to "Mistral",
     "openrouter" to "OpenRouter",
+    "kimi" to "Kimi Code",
 )
 
 data class UsageWindow(
@@ -58,7 +59,10 @@ data class UsageWindow(
     val utilization: Double,
     val resetsAt: Instant?,
     val length: Duration?,
+    /** Riga solo informativa (crediti rimasti, reset disponibili…): niente percentuale né avvisi. */
+    val note: String? = null,
 ) {
+    val isInfo: Boolean get() = note != null
     val isLong: Boolean get() = length == null || length > SHORT_WINDOW_MAX
     val fullLabel: String get() = "${PROVIDER_NAMES[provider] ?: provider} · $label"
 }
@@ -213,6 +217,7 @@ fun evaluate(
     val today = now.atZone(zone).toLocalDate().toString()
 
     for (w in windows) {
+        if (w.isInfo) continue
         val old = state[w.key]
         val newWindow = old == null || !sameWindow(old.resetsAt, w.resetsAt)
         var ws = if (newWindow) WindowState(resetsAt = w.resetsAt?.toString()) else old!!
@@ -322,6 +327,7 @@ fun windowsToJson(windows: List<UsageWindow>): String = buildJsonArray {
             put("utilization", w.utilization)
             put("resets_at", w.resetsAt?.toString())
             put("length_s", w.length?.seconds)
+            put("note", w.note)
         })
     }
 }.toString()
@@ -338,6 +344,7 @@ fun windowsFromJson(json: String?): List<UsageWindow> {
             utilization = (o["utilization"] as? JsonPrimitive)?.doubleOrNull ?: return@mapNotNull null,
             resetsAt = parseInstant(o.str("resets_at")),
             length = (o["length_s"] as? JsonPrimitive)?.longOrNull?.let { Duration.ofSeconds(it) },
+            note = o.str("note"),
         )
     }
 }

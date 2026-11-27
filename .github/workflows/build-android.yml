@@ -2,10 +2,10 @@ name: Build Android
 
 on:
   push:
-    branches: [main]
-    paths: ["android/**", ".github/workflows/build-android.yml"]
+    branches: [main, main_claude]
+    paths: ["android/**", "fixtures/**", ".github/workflows/build-android.yml"]
   pull_request:
-    paths: ["android/**"]
+    paths: ["android/**", "fixtures/**"]
   workflow_dispatch:
 
 permissions:
@@ -35,7 +35,13 @@ jobs:
           gradle-version: "8.10.2"
 
       - name: Test e APK
-        run: gradle --no-daemon testDebugUnitTest assembleDebug
+        run: gradle --no-daemon testDebugUnitTest assembleDebug 2>&1 | tee build.log
+
+      - name: Errori di compilazione e test in evidenza
+        if: failure()
+        run: |
+          grep -E '^e: |FAILED|AssertionError|Exception at|expected:<' build.log | head -40 | \
+            sed -E 's/^/::error::/' || true
 
       - name: Rinomina APK
         run: cp app/build/outputs/apk/debug/app-debug.apk UsageAI.apk

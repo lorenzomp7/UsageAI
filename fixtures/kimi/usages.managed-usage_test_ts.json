@@ -1,0 +1,14 @@
+{
+  "usage": {"name": "Weekly limit", "used": 400, "limit": 1000, "resetAt": "2026-12-01T09:00:00.123456789Z"},
+  "limits": [
+    {"detail": {"used": 60, "limit": 100, "reset_at": "2026-11-27T15:00:00Z"}, "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"}},
+    {"detail": {"remaining": 10, "limit": 50, "resetIn": 7200}, "window": {"duration": 24, "timeUnit": "TIME_UNIT_HOUR"}}
+  ],
+  "boosterWallet": {
+    "id": "wallet_1",
+    "balance": {"type": "BOOSTER", "amount": "20000000000", "amountLeft": "10000000000", "unit": "UNIT_CURRENCY"},
+    "monthlyChargeLimitEnabled": true,
+    "monthlyChargeLimit": {"currency": "USD", "priceInCents": "20000"},
+    "monthlyUsed": {"currency": "USD", "priceInCents": "5000"}
+  }
+}

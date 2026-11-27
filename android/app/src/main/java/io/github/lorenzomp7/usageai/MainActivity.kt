@@ -178,6 +178,10 @@ class MainActivity : Activity() {
                 servicesBox.addView(text("In attesa del primo controllo.", 14f, dim = 0.7f))
             }
             for (w in mine) {
+                if (w.isInfo) {
+                    servicesBox.addView(text("${w.label}: ${w.note}", 14f, dim = 0.8f).apply { setPadding(0, dp(8), 0, 0) })
+                    continue
+                }
                 val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, 0) }
                 val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM }
                 head.addView(text(w.label, 15f).apply {
@@ -198,6 +202,7 @@ class MainActivity : Activity() {
 
             val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, 0) }
             if (s.loginUrl != null) buttons.addView(smallButton("Accedi") { openLogin(s, null) })
+            s.deviceLogin?.let { login -> buttons.addView(smallButton("Codice") { deviceLogin(s, login) }) }
             buttons.addView(smallButton("Incolla") { askCredential(s) })
             if (credential != null) buttons.addView(smallButton("Cancella") { remove(s) })
             servicesBox.addView(buttons)
@@ -290,6 +295,67 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("Annulla", null)
             .show()
+    }
+
+    /** Accesso con codice: mostra il codice, apre la pagina e aspetta la conferma. */
+    private fun deviceLogin(s: Service, login: DeviceLogin) {
+        val http = Http(applicationContext)
+        scope.launch {
+            val start = try { login.start(http) } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, e.message ?: "Accesso con codice non riuscito", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val dialog = AlertDialog.Builder(this@MainActivity)
+                .setTitle("${s.name}: accesso con codice")
+                .setMessage("Codice: ${start.userCode}\n\n${login.help}\n\nIn attesa della conferma…")
+                .setPositiveButton("Apri pagina", null)
+                .setNeutralButton("Copia codice", null)
+                .setNegativeButton("Annulla", null)
+                .setCancelable(false)
+                .create()
+            var waiting: kotlinx.coroutines.Job? = null
+            dialog.setOnShowListener {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                    runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(start.url))) }
+                }
+                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                    val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("codice", start.userCode))
+                    Toast.makeText(this@MainActivity, "Codice copiato", Toast.LENGTH_SHORT).show()
+                }
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+                    waiting?.cancel()
+                    dialog.dismiss()
+                }
+            }
+            dialog.show()
+            waiting = launch {
+                var interval = start.intervalSeconds
+                try {
+                    while (Instant.now().isBefore(start.expiresAt)) {
+                        kotlinx.coroutines.delay(interval * 1000)
+                        when (val r = login.poll(http, start)) {
+                            DevicePoll.Pending -> Unit
+                            DevicePoll.SlowDown -> interval += 5
+                            is DevicePoll.Done -> {
+                                store.setCredential(s.id, r.credential)
+                                dialog.dismiss()
+                                Toast.makeText(this@MainActivity, "${s.name}: accesso fatto", Toast.LENGTH_SHORT).show()
+                                refresh()
+                                return@launch
+                            }
+                        }
+                    }
+                    dialog.dismiss()
+                    Toast.makeText(this@MainActivity, "Il codice è scaduto: riprova.", Toast.LENGTH_LONG).show()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    dialog.dismiss()
+                    Toast.makeText(this@MainActivity, e.message ?: "Accesso non riuscito", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     private fun askCredential(s: Service) {

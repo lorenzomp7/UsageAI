@@ -105,6 +105,11 @@ class Store(context: Context) {
         lastWindows = lastWindows.filter { it.provider != provider }
     }
 
+    /** Sostituisce la credenziale (es. token rinnovato) senza dimenticare stato, errori e finestre. */
+    fun updateCredential(provider: String, value: String) {
+        prefs.edit().putString("cred_$provider", Crypto.encrypt(value.trim())).apply()
+    }
+
     fun cache(provider: String, key: String): String? = prefs.getString("cache_${provider}_$key", null)
     fun setCache(provider: String, key: String, value: String?) {
         prefs.edit().apply { if (value == null) remove("cache_${provider}_$key") else putString("cache_${provider}_$key", value) }.apply()

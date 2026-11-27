@@ -1,4 +1,4 @@
-"""Grok (SuperGrok): crediti del periodo (cli-chat-proxy.grok.com/v1/billing).
+"""Grok (SuperGrok): crediti del periodo (cli-chat-proxy.grok.com/v1/billing?format=credits).
 
 Usa il login della CLI ufficiale di Grok (%USERPROFILE%\\.grok\\auth.json), letto da solo se c'è,
 oppure il token incollato a mano (il valore «key» dello stesso file).
@@ -26,9 +26,13 @@ def parse(data: dict) -> list[Window]:
         raise ApiError("Risposta di Grok cambiata.")
     percent = number(config.get("creditUsagePercent"))
     if percent is None:
-        cap, used = _amount(config.get("onDemandCap")), _amount(config.get("onDemandUsed"))
-        if cap and used is not None:
-            percent = used / cap * 100
+        # Senza percentuale: crediti del periodo (monthlyLimit/used), poi il tetto on-demand.
+        # Campi confermati dal codice della CLI di Grok (extensions/billing.rs, BillingConfig).
+        for cap_key, used_key in (("monthlyLimit", "used"), ("onDemandCap", "onDemandUsed")):
+            cap, used = _amount(config.get(cap_key)), _amount(config.get(used_key))
+            if cap and used is not None:
+                percent = used / cap * 100
+                break
     period = config.get("currentPeriod") if isinstance(config.get("currentPeriod"), dict) else {}
     end = parse_datetime(period.get("end"))
     start = parse_datetime(period.get("start")) if end else parse_datetime(config.get("billingPeriodStart"))

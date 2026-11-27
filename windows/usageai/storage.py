@@ -1,7 +1,7 @@
-"""Impostazioni, stato delle notifiche e sessionKey.
+"""Impostazioni, stato delle notifiche e credenziali dei servizi.
 
 - impostazioni e stato: JSON in %APPDATA%\\UsageAI
-- sessionKey: Gestione credenziali di Windows (tramite keyring), mai in chiaro su disco
+- credenziali: Gestione credenziali di Windows (tramite keyring), mai in chiaro su disco
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from .core import Settings, WindowState
 
 APP_NAME = "UsageAI"
 KEYRING_SERVICE = "UsageAI"
-KEYRING_USER = "claude.ai sessionKey"
+_LEGACY_CLAUDE_USER = "claude.ai sessionKey"   # versione 1, solo Claude
 
 
 def data_dir() -> Path:
@@ -38,18 +38,25 @@ def _write_json(path: Path, data) -> None:
     tmp.replace(path)
 
 
+def _int_list(v):
+    return sorted(set(v)) if isinstance(v, list) and all(isinstance(x, int) for x in v) else None
+
+
 def load_settings() -> Settings:
     raw = _read_json(data_dir() / "config.json", {})
     s = Settings()
-    for name in ("thresholds_5h", "thresholds_week"):
-        v = raw.get(name)
-        if isinstance(v, list) and all(isinstance(x, int) for x in v):
-            setattr(s, name, sorted(set(v)))
+    # thresholds_5h / thresholds_week: nomi della versione 1
+    short = _int_list(raw.get("thresholds_short", raw.get("thresholds_5h")))
+    long = _int_list(raw.get("thresholds_long", raw.get("thresholds_week")))
+    if short is not None:
+        s.thresholds_short = short
+    if long is not None:
+        s.thresholds_long = long
     if isinstance(raw.get("pace_enabled"), bool):
         s.pace_enabled = raw["pace_enabled"]
     for name, lo, hi in (("pace_margin", 1, 50), ("interval_min", 1, 60)):
         v = raw.get(name)
-        if isinstance(v, int) and lo <= v <= hi:
+        if isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi:
             setattr(s, name, v)
     return s
 
@@ -58,39 +65,50 @@ def save_settings(s: Settings) -> None:
     _write_json(data_dir() / "config.json", asdict(s))
 
 
-def load_state() -> tuple[dict[str, WindowState], str | None]:
+def load_state() -> tuple[dict[str, WindowState], dict[str, dict]]:
+    """Stato delle soglie per finestra e cache per servizio (es. organizzazione di Claude)."""
     raw = _read_json(data_dir() / "state.json", {})
     windows = {}
     for key, v in (raw.get("windows") or {}).items():
-        if isinstance(v, dict):
-            windows[key] = WindowState(
-                resets_at=v.get("resets_at"),
-                notified=[int(x) for x in v.get("notified", []) if isinstance(x, int)],
-                pace_notified=bool(v.get("pace_notified", False)),
-            )
-    return windows, raw.get("org_id")
+        if not isinstance(v, dict):
+            continue
+        if ":" not in key:          # versione 1: chiavi di Claude senza prefisso
+            key = f"claude:{key}"
+        windows[key] = WindowState(
+            resets_at=v.get("resets_at"),
+            notified=[int(x) for x in v.get("notified", []) if isinstance(x, int)],
+            pace_notified=bool(v.get("pace_notified", False)),
+        )
+    caches = raw.get("caches") if isinstance(raw.get("caches"), dict) else {}
+    if raw.get("org_id") and "claude" not in caches:
+        caches["claude"] = {"org_id": raw["org_id"]}
+    return windows, caches
 
 
-def save_state(windows: dict[str, WindowState], org_id: str | None) -> None:
+def save_state(windows: dict[str, WindowState], caches: dict[str, dict]) -> None:
     _write_json(data_dir() / "state.json",
-                {"windows": {k: asdict(v) for k, v in windows.items()}, "org_id": org_id})
+                {"windows": {k: asdict(v) for k, v in windows.items()}, "caches": caches})
 
 
-def get_session_key() -> str | None:
+def get_credential(provider_id: str) -> str | None:
     try:
         import keyring
-        return keyring.get_password(KEYRING_SERVICE, KEYRING_USER)
+        value = keyring.get_password(KEYRING_SERVICE, f"cred:{provider_id}")
+        if value is None and provider_id == "claude":
+            value = keyring.get_password(KEYRING_SERVICE, _LEGACY_CLAUDE_USER)
+        return value
     except Exception:
         return None
 
 
-def set_session_key(value: str | None) -> None:
+def set_credential(provider_id: str, value: str | None) -> None:
     import keyring
     if value:
-        keyring.set_password(KEYRING_SERVICE, KEYRING_USER, value.strip())
-    else:
+        keyring.set_password(KEYRING_SERVICE, f"cred:{provider_id}", value.strip())
+        return
+    for user in (f"cred:{provider_id}",) + ((_LEGACY_CLAUDE_USER,) if provider_id == "claude" else ()):
         try:
-            keyring.delete_password(KEYRING_SERVICE, KEYRING_USER)
+            keyring.delete_password(KEYRING_SERVICE, user)
         except Exception:
             pass
 

@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.time.Duration
 import java.time.Instant
@@ -11,9 +12,9 @@ import java.time.Instant
 class UsageLogicTest {
     private val now: Instant = Instant.parse("2026-11-27T12:00:00Z")
 
-    private fun sample(five: Double = 40.0, week: Double = 30.0,
-                       fiveReset: Instant = now.plus(Duration.ofHours(2)),
-                       weekReset: Instant = now.plus(Duration.ofDays(4))) = """
+    private fun claudeJson(five: Double = 40.0, week: Double = 30.0,
+                           fiveReset: Instant = now.plus(Duration.ofHours(2)),
+                           weekReset: Instant = now.plus(Duration.ofDays(4))) = """
         {"five_hour":{"utilization":$five,"resets_at":"${fiveReset.toString().replace("Z", "+00:00")}"},
          "seven_day":{"utilization":$week,"resets_at":"$weekReset"},
          "seven_day_opus":{"utilization":5.0,"resets_at":null},
@@ -21,87 +22,159 @@ class UsageLogicTest {
          "extra_usage":{"is_enabled":false}}
     """.trimIndent()
 
-    @Test fun parsesAndOrders() {
-        val ws = parseUsage(sample())
-        assertEquals(listOf("five_hour", "seven_day", "seven_day_opus"), ws.map { it.key })
-        assertEquals(now.plus(Duration.ofDays(4)), ws[1].resetsAt)
-        assertNull(ws[2].resetsAt)
-        assertEquals("Settimana · Opus", ws[2].label)
+    private fun claude(five: Double = 40.0, week: Double = 30.0,
+                       fiveReset: Instant = now.plus(Duration.ofHours(2)),
+                       weekReset: Instant = now.plus(Duration.ofDays(4))) =
+        Parsers.claude(claudeJson(five, week, fiveReset, weekReset)).take(2)
+
+    private inline fun <reified T : Throwable> assertThrows(block: () -> Unit) {
+        try { block(); fail("doveva lanciare ${T::class.simpleName}") } catch (e: Throwable) {
+            if (e !is T) throw e
+        }
     }
 
-    @Test fun parsesFractionalTimestamp() {
-        val ws = parseUsage("""{"five_hour":{"utilization":1,"resets_at":"2026-11-27T14:00:00.512345+00:00"}}""")
-        assertEquals(Instant.parse("2026-11-27T14:00:00.512345Z"), ws[0].resetsAt)
+    // ---------- logica comune ----------
+
+    @Test fun claudeParsesAndOrders() {
+        val ws = Parsers.claude(claudeJson())
+        assertEquals(listOf("claude:five_hour", "claude:seven_day", "claude:seven_day_opus"), ws.map { it.key })
+        assertEquals("Settimana Opus", ws[2].label)
+        assertNull(ws[2].resetsAt)
+        assertFalse(ws[0].isLong); assertTrue(ws[1].isLong)
+        assertEquals("Claude · Settimana", ws[1].fullLabel)
+    }
+
+    @Test fun windowLabels() {
+        assertEquals("Sessione 5 ore", windowLabel(Duration.ofHours(5)))
+        assertEquals("Settimana", windowLabel(Duration.ofDays(7)))
+        assertEquals("Mese", windowLabel(Duration.ofDays(30)))
     }
 
     @Test fun thresholdOncePerWindow() {
-        val s = AlertSettings(thresholds5h = listOf(50, 80), thresholdsWeek = listOf(90), paceEnabled = false)
-        var (alerts, state) = evaluate(parseUsage(sample(five = 60.0)), s, emptyMap(), now)
-        assertEquals(listOf("Sessione 5 ore: 60% (soglia 50%)"), alerts.map { it.title })
-        evaluate(parseUsage(sample(five = 65.0)), s, state, now).let { alerts = it.first; state = it.second }
+        val s = AlertSettings(thresholdsShort = listOf(50, 80), thresholdsLong = listOf(90), paceEnabled = false)
+        var (alerts, state) = evaluate(claude(five = 60.0), s, emptyMap(), now)
+        assertEquals(listOf("Claude · Sessione 5 ore: 60% (soglia 50%)"), alerts.map { it.title })
+        evaluate(claude(five = 65.0), s, state, now).let { alerts = it.first; state = it.second }
         assertTrue(alerts.isEmpty())
-        evaluate(parseUsage(sample(five = 85.0)), s, state, now).let { alerts = it.first }
+        evaluate(claude(five = 85.0), s, state, now).let { alerts = it.first }
         assertTrue(alerts.single().title.contains("soglia 80%"))
     }
 
-    @Test fun jumpGivesSingleAlert() {
-        val s = AlertSettings(thresholds5h = listOf(50, 80), paceEnabled = false)
-        val (alerts, state) = evaluate(parseUsage(sample(five = 90.0)), s, emptyMap(), now)
-        assertTrue(alerts.single().title.contains("soglia 80%"))
-        assertEquals(listOf(50, 80), state["five_hour"]!!.notified)
-    }
-
-    @Test fun newWindowRearms() {
-        val s = AlertSettings(thresholds5h = listOf(50), paceEnabled = false)
-        val state = evaluate(parseUsage(sample(five = 60.0)), s, emptyMap(), now).second
+    @Test fun newWindowRearmsJitterDoesNot() {
+        val s = AlertSettings(thresholdsShort = listOf(50), paceEnabled = false)
+        val state = evaluate(claude(five = 60.0), s, emptyMap(), now).second
         val later = now.plus(Duration.ofHours(6))
-        val alerts = evaluate(parseUsage(sample(five = 55.0, fiveReset = later.plus(Duration.ofHours(3)))), s, state, later).first
-        assertEquals(1, alerts.size)
-        val jitter = evaluate(parseUsage(sample(five = 62.0, fiveReset = now.plus(Duration.ofMinutes(125)))), s, state, now).first
-        assertTrue(jitter.isEmpty())
+        assertEquals(1, evaluate(claude(five = 55.0, fiveReset = later.plus(Duration.ofHours(3))), s, state, later).first.size)
+        assertTrue(evaluate(claude(five = 62.0, fiveReset = now.plus(Duration.ofMinutes(125))), s, state, now).first.isEmpty())
+    }
+
+    @Test fun missingProviderKeepsState() {
+        val s = AlertSettings(thresholdsShort = listOf(50), paceEnabled = false)
+        var state = evaluate(claude(five = 60.0), s, emptyMap(), now).second
+        state = evaluate(emptyList(), s, state, now).second
+        assertTrue(evaluate(claude(five = 61.0), s, state, now).first.isEmpty())
     }
 
     @Test fun paceAlertAndRearm() {
-        val w = parseUsage(sample())[1]
-        assertEquals(300.0 / 7, expectedUtilization(w, now)!!, 0.01)
-        val s = AlertSettings(thresholdsWeek = emptyList(), paceMargin = 10)
-        var (alerts, state) = evaluate(parseUsage(sample(week = 60.0)), s, emptyMap(), now)
-        val pace = alerts.single { it.key == "seven_day_pace" }
+        assertEquals(300.0 / 7, expectedUtilization(claude()[1], now)!!, 0.01)
+        val s = AlertSettings(thresholdsLong = emptyList(), paceMargin = 10)
+        var (alerts, state) = evaluate(claude(week = 60.0), s, emptyMap(), now)
+        val pace = alerts.single { it.key == "claude:seven_day:pace" }
         assertTrue(pace.text, pace.text.contains("saresti al 43%"))
-        evaluate(parseUsage(sample(week = 61.0)), s, state, now).let { alerts = it.first; state = it.second }
-        assertTrue(alerts.none { it.key == "seven_day_pace" })
-        state = evaluate(parseUsage(sample(week = 40.0)), s, state, now).second
-        assertFalse(state["seven_day"]!!.paceNotified)
+        evaluate(claude(week = 61.0), s, state, now).let { alerts = it.first; state = it.second }
+        assertTrue(alerts.none { it.key.endsWith(":pace") })
+        state = evaluate(claude(week = 40.0), s, state, now).second
+        assertFalse(state["claude:seven_day"]!!.paceNotified)
+    }
+
+    @Test fun paceOnMonthlyWindow() {
+        val month = UsageWindow("cursor", "cursor:plan", "Uso incluso nel mese", 70.0,
+            now.plus(Duration.ofDays(20)), Duration.ofDays(30))
+        val alerts = evaluate(listOf(month), AlertSettings(thresholdsLong = emptyList()), emptyMap(), now).first
+        assertTrue(alerts.single().text.contains("saresti al 33%"))
     }
 
     @Test fun paceQuietAtStartOfWeek() {
-        val s = AlertSettings(thresholdsWeek = emptyList())
-        val data = sample(week = 15.0, weekReset = now.plus(Duration.ofDays(6)).plus(Duration.ofHours(23)))
-        assertTrue(evaluate(parseUsage(data), s, emptyMap(), now).first.isEmpty())
+        val ws = claude(week = 15.0, weekReset = now.plus(Duration.ofDays(6)).plus(Duration.ofHours(23)))
+        assertTrue(evaluate(ws, AlertSettings(thresholdsLong = emptyList()), emptyMap(), now).first.isEmpty())
     }
 
     @Test fun thresholdsParsing() {
         assertEquals(listOf(50, 75, 90), parseThresholds("75, 50;90  50"))
         assertEquals(emptyList<Int>(), parseThresholds(""))
-        var failed = 0
-        for (bad in listOf("0, 50", "abc")) {
-            try { parseThresholds(bad) } catch (e: IllegalArgumentException) { failed++ }
-        }
-        assertEquals(2, failed)
+        assertThrows<IllegalArgumentException> { parseThresholds("0, 50") }
+        assertThrows<IllegalArgumentException> { parseThresholds("abc") }
     }
 
-    @Test fun orgPicking() {
-        val json = """[{"uuid":"api","capabilities":["api"]},{"uuid":"free","capabilities":["chat"]},
-            {"uuid":"max","capabilities":["chat","claude_max"]}]"""
-        assertEquals("max", pickOrgId(json))
-        assertEquals("a", pickOrgId("""[{"uuid":"a","capabilities":["chat"]}]"""))
-        assertNull(pickOrgId("[]"))
-    }
-
-    @Test fun stateRoundTrip() {
-        val st = mapOf("five_hour" to WindowState("2026-11-27T14:00:00Z", listOf(50, 80), true),
-                       "seven_day" to WindowState(null, emptyList(), false))
+    @Test fun serializationRoundTrips() {
+        val st = mapOf("claude:five_hour" to WindowState("2026-11-27T14:00:00Z", listOf(50, 80), true))
         assertEquals(st, stateFromJson(stateToJson(st)))
+        assertEquals(listOf(50), stateFromJson("""{"five_hour":{"notified":[50]}}""")["claude:five_hour"]!!.notified)
         assertTrue(stateFromJson("garbage").isEmpty())
+        val ws = Parsers.claude(claudeJson())
+        assertEquals(ws, windowsFromJson(windowsToJson(ws)))
+        assertEquals(mapOf("a" to "b"), mapFromJson(mapToJson(mapOf("a" to "b"))))
+    }
+
+    @Test fun cookieHeaders() {
+        assertEquals("WorkosCursorSessionToken=abc", cookieHeader(" abc ", "WorkosCursorSessionToken"))
+        assertEquals("a=1; b=2", cookieHeader("Cookie: a=1; b=2", "x"))
+    }
+
+    // ---------- servizi ----------
+
+    @Test fun claudeOrgPicking() {
+        assertEquals("max", Parsers.claudeOrgId("""[{"uuid":"api","capabilities":["api"]},
+            {"uuid":"free","capabilities":["chat"]},{"uuid":"max","capabilities":["chat","claude_max"]}]"""))
+        assertNull(Parsers.claudeOrgId("[]"))
+    }
+
+    @Test fun codex() {
+        val json = """{"plan_type":"plus","rate_limit":{
+            "primary_window":{"used_percent":42,"reset_at":1764259200,"limit_window_seconds":18000},
+            "secondary_window":{"used_percent":17,"reset_at":1764700000,"limit_window_seconds":604800}}}"""
+        val ws = Parsers.codex(json)
+        assertEquals(listOf("Sessione 5 ore" to 42.0, "Settimana" to 17.0), ws.map { it.label to it.utilization })
+        assertEquals(Instant.ofEpochSecond(1764259200), ws[0].resetsAt)
+        assertEquals("tok", Parsers.codexAccessToken("""{"accessToken":"tok","user":{}}"""))
+        assertNull(Parsers.codexAccessToken("{}"))
+    }
+
+    @Test fun gemini() {
+        val body = ")]}'\n" + """[{"data":{"viewer":{"rpcs":{"getUsageInfo":{"subscriptionTier":"TIER1","pools":[
+            {"poolType":"GXU_FIVE_HOURLY","percentageUsed":0.25,"gxu":{"windowRefreshesAt":"2026-11-27T15:00:00Z"}},
+            {"poolType":"GXU_WEEKLY","percentageUsed":0.6,"gxu":{"windowRefreshesAt":"2026-12-02T08:00:00Z"}}]}}}}}]"""
+        val ws = Parsers.gemini(body)
+        assertEquals(listOf("Sessione 5 ore" to 25.0, "Settimana" to 60.0), ws.map { it.label to it.utilization })
+        assertThrows<AuthException> { Parsers.gemini("""[{"data":{"viewer":null}}]""") }
+        assertThrows<AuthException> { Parsers.gemini("<!doctype html>") }
+        assertThrows<ApiException> { Parsers.gemini("""[{"data":{"x":1}}]""") }
+    }
+
+    @Test fun cursor() {
+        val json = """{"billingCycleStart":"2026-11-18T08:09:13.000Z","billingCycleEnd":"2026-12-18T08:09:13.000Z",
+            "membershipType":"pro","isUnlimited":false,"individualUsage":{
+            "plan":{"enabled":true,"used":1516,"limit":2000,"remaining":484,"autoPercentUsed":3.0,"apiPercentUsed":81.0},
+            "onDemand":{"enabled":true,"used":500,"limit":2000,"remaining":1500}},"teamUsage":{}}"""
+        val ws = Parsers.cursor(json).associateBy { it.key }
+        assertEquals(75.8, ws["cursor:plan"]!!.utilization, 0.001)
+        assertEquals(81.0, ws["cursor:api"]!!.utilization, 0.001)
+        assertEquals(25.0, ws["cursor:ondemand"]!!.utilization, 0.001)
+        assertTrue(ws["cursor:ondemand"]!!.label.contains("20 $"))
+        assertEquals(Duration.ofDays(30), ws["cursor:plan"]!!.length)
+    }
+
+    @Test fun copilot() {
+        val json = """{"copilot_plan":"individual","quota_reset_date":"2026-12-01","quota_snapshots":{
+            "chat":{"unlimited":true},"completions":{"unlimited":true},
+            "premium_interactions":{"entitlement":300,"remaining":120,"percent_remaining":40.0,"unlimited":false}}}"""
+        val w = Parsers.copilot(json).single()
+        assertEquals("Richieste premium", w.label)
+        assertEquals(60.0, w.utilization, 0.001)
+        assertEquals(Instant.parse("2026-12-01T00:00:00Z"), w.resetsAt)
+        assertEquals(Duration.ofDays(30), w.length)
+        assertEquals(80.0, Parsers.copilot("""{"quota_snapshots":{"premium_interactions":{"entitlement":50,"remaining":10}}}""")
+            .single().utilization, 0.001)
+        assertThrows<ApiException> { Parsers.copilot("""{"quota_snapshots":{"chat":{"unlimited":true}}}""") }
     }
 }

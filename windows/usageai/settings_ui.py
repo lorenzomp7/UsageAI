@@ -1,4 +1,4 @@
-"""Finestra Impostazioni (tkinter, incluso in Python: nessuna dipendenza in più)."""
+"""Finestra Impostazioni (tkinter, incluso in Python): una scheda per gli avvisi e una per servizio."""
 from __future__ import annotations
 
 import tkinter as tk
@@ -6,18 +6,14 @@ from tkinter import messagebox, ttk
 
 from .core import Settings, parse_thresholds
 
-HELP = (
-    "Come trovare il sessionKey:\n"
-    "1. Apri claude.ai in Chrome o Edge, già loggato.\n"
-    "2. Premi F12 → scheda Application (Applicazione) → Cookies → https://claude.ai.\n"
-    "3. Copia il valore di «sessionKey» (inizia con sk-ant-sid) e incollalo qui.\n"
-    "Il valore resta nella Gestione credenziali di Windows di questo PC."
-)
 
+def open_settings(settings: Settings, providers, configured: dict, auto: dict, autostart: bool,
+                  on_save, _autoclose_ms: int | None = None) -> None:
+    """Blocca finché la finestra è aperta.
 
-def open_settings(settings: Settings, has_key: bool, autostart: bool, on_save,
-                  _autoclose_ms: int | None = None) -> None:
-    """Blocca finché la finestra è aperta. on_save(settings, new_key_or_None, autostart)."""
+    on_save(settings, credentials, autostart): credentials = {id_servizio: valore nuovo, o None per rimuovere}
+    con dentro solo i servizi modificati.
+    """
     root = tk.Tk()
     if _autoclose_ms:          # solo per il test automatico su GitHub Actions
         root.after(_autoclose_ms, root.destroy)
@@ -28,45 +24,68 @@ def open_settings(settings: Settings, has_key: bool, autostart: bool, on_save,
     except tk.TclError:
         pass
 
-    frm = ttk.Frame(root, padding=14)
-    frm.grid()
+    outer = ttk.Frame(root, padding=10)
+    outer.grid()
+    nb = ttk.Notebook(outer)
+    nb.grid(row=0, column=0, sticky="nsew")
 
-    ttk.Label(frm, text="sessionKey di claude.ai").grid(row=0, column=0, sticky="w")
-    key_var = tk.StringVar()
-    key_entry = ttk.Entry(frm, textvariable=key_var, show="•", width=48)
-    key_entry.grid(row=1, column=0, columnspan=2, sticky="we", pady=(2, 2))
-    ttk.Label(frm, text=("Già salvato: lascia vuoto per non cambiarlo." if has_key
-                         else "Obbligatorio al primo avvio."),
-              foreground="#666").grid(row=2, column=0, columnspan=2, sticky="w")
-    ttk.Label(frm, text=HELP, foreground="#444", justify="left", wraplength=420).grid(
-        row=3, column=0, columnspan=2, sticky="w", pady=(6, 12))
+    # ---- scheda Avvisi ----
+    alerts = ttk.Frame(nb, padding=12)
+    nb.add(alerts, text="Avvisi")
 
-    def row(r, label, value):
-        ttk.Label(frm, text=label).grid(row=r, column=0, sticky="w", pady=3)
+    def row(parent, r, label, value):
+        ttk.Label(parent, text=label).grid(row=r, column=0, sticky="w", pady=3)
         var = tk.StringVar(value=value)
-        ttk.Entry(frm, textvariable=var, width=16).grid(row=r, column=1, sticky="w", pady=3)
+        ttk.Entry(parent, textvariable=var, width=16).grid(row=r, column=1, sticky="w", pady=3, padx=(8, 0))
         return var
 
-    t5 = row(4, "Soglie sessione 5 ore (%)", ", ".join(map(str, settings.thresholds_5h)))
-    tw = row(5, "Soglie settimanali (%)", ", ".join(map(str, settings.thresholds_week)))
-    ttk.Label(frm, text="Più soglie separate da virgola, es. 50, 75, 90. Vuoto = nessun avviso.",
-              foreground="#666").grid(row=6, column=0, columnspan=2, sticky="w")
-
+    ts = row(alerts, 0, "Soglie sessioni brevi, es. 5 ore (%)", ", ".join(map(str, settings.thresholds_short)))
+    tl = row(alerts, 1, "Soglie periodi lunghi, settimana o mese (%)", ", ".join(map(str, settings.thresholds_long)))
+    ttk.Label(alerts, text="Valgono per tutti i servizi. Più soglie separate da virgola; vuoto = nessun avviso.",
+              foreground="#666", wraplength=430).grid(row=2, column=0, columnspan=2, sticky="w")
     pace_var = tk.BooleanVar(value=settings.pace_enabled)
-    ttk.Checkbutton(frm, text="Avvisami se consumo la settimana più veloce del ritmo costante",
-                    variable=pace_var).grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
-    margin = row(8, "…oltre quanti punti di anticipo", str(settings.pace_margin))
-    interval = row(9, "Controlla ogni (minuti)", str(settings.interval_min))
-
+    ttk.Checkbutton(alerts, text="Avvisami se consumo un periodo lungo più veloce del ritmo costante",
+                    variable=pace_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+    margin = row(alerts, 4, "…oltre quanti punti di anticipo", str(settings.pace_margin))
+    interval = row(alerts, 5, "Controlla ogni (minuti)", str(settings.interval_min))
     auto_var = tk.BooleanVar(value=autostart)
-    ttk.Checkbutton(frm, text="Avvia con Windows", variable=auto_var).grid(
-        row=10, column=0, columnspan=2, sticky="w", pady=(10, 0))
+    ttk.Checkbutton(alerts, text="Avvia con Windows", variable=auto_var).grid(
+        row=6, column=0, columnspan=2, sticky="w", pady=(10, 0))
+
+    # ---- una scheda per servizio ----
+    cred_vars: dict[str, tk.StringVar] = {}
+    remove_vars: dict[str, tk.BooleanVar] = {}
+    for p in providers:
+        tab = ttk.Frame(nb, padding=12)
+        nb.add(tab, text=p.name + (" ✓" if configured.get(p.id) or auto.get(p.id) else ""))
+        if configured.get(p.id):
+            status = "Configurato. Lascia vuoto per non cambiarlo."
+        elif auto.get(p.id):
+            status = "Trovato da solo su questo PC: non serve fare nulla."
+        else:
+            status = "Non configurato: incolla la credenziale per attivarlo."
+        ttk.Label(tab, text=status, foreground="#2e7d32" if (configured.get(p.id) or auto.get(p.id))
+                  else "#666").grid(row=0, column=0, sticky="w")
+        ttk.Label(tab, text=p.credential_label).grid(row=1, column=0, sticky="w", pady=(10, 0))
+        var = tk.StringVar()
+        ttk.Entry(tab, textvariable=var, show="•", width=56).grid(row=2, column=0, sticky="we", pady=2)
+        cred_vars[p.id] = var
+        ttk.Label(tab, text=p.help, foreground="#444", justify="left", wraplength=430).grid(
+            row=3, column=0, sticky="w", pady=(6, 0))
+        if configured.get(p.id):
+            rv = tk.BooleanVar(value=False)
+            ttk.Checkbutton(tab, text="Rimuovi questo servizio", variable=rv).grid(
+                row=4, column=0, sticky="w", pady=(10, 0))
+            remove_vars[p.id] = rv
+        ttk.Label(tab, text="La credenziale resta nella Gestione credenziali di Windows e viene "
+                            "mandata solo al sito del servizio.",
+                  foreground="#888", wraplength=430).grid(row=5, column=0, sticky="w", pady=(10, 0))
 
     def save():
         try:
             new = Settings(
-                thresholds_5h=parse_thresholds(t5.get()),
-                thresholds_week=parse_thresholds(tw.get()),
+                thresholds_short=parse_thresholds(ts.get()),
+                thresholds_long=parse_thresholds(tl.get()),
                 pace_enabled=pace_var.get(),
                 pace_margin=int(margin.get()),
                 interval_min=int(interval.get()),
@@ -79,18 +98,28 @@ def open_settings(settings: Settings, has_key: bool, autostart: bool, on_save,
             msg = str(e) if "invalid literal" not in str(e) else "Usa solo numeri interi."
             messagebox.showerror("Valore non valido", msg, parent=root)
             return
-        key = key_var.get().strip() or None
-        if not has_key and not key:
-            messagebox.showerror("Manca il sessionKey", "Incolla il sessionKey per iniziare.",
-                                 parent=root)
+        creds: dict[str, str | None] = {}
+        for pid, var in cred_vars.items():
+            value = var.get().strip()
+            if value:
+                creds[pid] = value
+            elif pid in remove_vars and remove_vars[pid].get():
+                creds[pid] = None
+        will_have_any = any(
+            (configured.get(p.id) and creds.get(p.id, "keep") is not None) or auto.get(p.id) or creds.get(p.id)
+            for p in providers)
+        if not will_have_any:
+            messagebox.showerror("Nessun servizio", "Configura almeno un servizio.", parent=root)
             return
-        on_save(new, key, auto_var.get())
+        on_save(new, creds, auto_var.get())
         root.destroy()
 
-    btns = ttk.Frame(frm)
-    btns.grid(row=11, column=0, columnspan=2, sticky="e", pady=(14, 0))
+    btns = ttk.Frame(outer)
+    btns.grid(row=1, column=0, sticky="e", pady=(10, 0))
     ttk.Button(btns, text="Annulla", command=root.destroy).grid(row=0, column=0, padx=4)
     ttk.Button(btns, text="Salva", command=save).grid(row=0, column=1)
     root.bind("<Return>", lambda _e: save())
-    key_entry.focus_set()
+    # Al primo avvio apro direttamente la scheda di Claude.
+    if not any(configured.values()) and not any(auto.values()):
+        nb.select(1)
     root.mainloop()

@@ -10,21 +10,29 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Impostazioni e stato in SharedPreferences; il sessionKey cifrato con una chiave del Keystore. */
+/** Impostazioni e stato in SharedPreferences; le credenziali cifrate con una chiave del Keystore. */
 class Store(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("usageai", Context.MODE_PRIVATE)
 
+    init {
+        // Versione 1 (solo Claude): il sessionKey era salvato in "session_key_enc".
+        prefs.getString("session_key_enc", null)?.let { old ->
+            if (!prefs.contains("cred_claude")) prefs.edit().putString("cred_claude", old).apply()
+            prefs.edit().remove("session_key_enc").remove("last_json").apply()
+        }
+    }
+
     var settings: AlertSettings
         get() = AlertSettings(
-            thresholds5h = intList(prefs.getString("t5h", null)) ?: listOf(80),
-            thresholdsWeek = intList(prefs.getString("tweek", null)) ?: listOf(50, 75, 90),
+            thresholdsShort = intList(prefs.getString("t_short", null) ?: prefs.getString("t5h", null)) ?: listOf(80),
+            thresholdsLong = intList(prefs.getString("t_long", null) ?: prefs.getString("tweek", null)) ?: listOf(50, 75, 90),
             paceEnabled = prefs.getBoolean("pace", true),
             paceMargin = prefs.getInt("pace_margin", 10),
         )
         set(v) {
             prefs.edit()
-                .putString("t5h", v.thresholds5h.joinToString(","))
-                .putString("tweek", v.thresholdsWeek.joinToString(","))
+                .putString("t_short", v.thresholdsShort.joinToString(","))
+                .putString("t_long", v.thresholdsLong.joinToString(","))
                 .putBoolean("pace", v.paceEnabled)
                 .putInt("pace_margin", v.paceMargin)
                 .apply()
@@ -34,37 +42,41 @@ class Store(context: Context) {
         get() = stateFromJson(prefs.getString("state", null))
         set(v) { prefs.edit().putString("state", stateToJson(v)).apply() }
 
-    var orgId: String?
-        get() = prefs.getString("org_id", null)
-        set(v) { prefs.edit().putString("org_id", v).apply() }
+    /** Ultime finestre lette, di tutti i servizi (per schermata e widget). */
+    var lastWindows: List<UsageWindow>
+        get() = windowsFromJson(prefs.getString("last_windows", null))
+        set(v) { prefs.edit().putString("last_windows", windowsToJson(v)).apply() }
 
-    var lastJson: String?
-        get() = prefs.getString("last_json", null)
-        set(v) { prefs.edit().putString("last_json", v).apply() }
+    /** Ultimo errore per servizio. */
+    var errors: Map<String, String>
+        get() = mapFromJson(prefs.getString("errors", null))
+        set(v) { prefs.edit().putString("errors", mapToJson(v)).apply() }
 
     var lastCheck: Long
         get() = prefs.getLong("last_check", 0L)
         set(v) { prefs.edit().putLong("last_check", v).apply() }
 
-    var lastError: String?
-        get() = prefs.getString("last_error", null)
-        set(v) { prefs.edit().putString("last_error", v).apply() }
+    var authWarned: Set<String>
+        get() = prefs.getStringSet("auth_warned_set", emptySet()) ?: emptySet()
+        set(v) { prefs.edit().putStringSet("auth_warned_set", v).apply() }
 
-    var authWarned: Boolean
-        get() = prefs.getBoolean("auth_warned", false)
-        set(v) { prefs.edit().putBoolean("auth_warned", v).apply() }
+    fun credential(provider: String): String? =
+        prefs.getString("cred_$provider", null)?.let { runCatching { Crypto.decrypt(it) }.getOrNull() }
 
-    var sessionKey: String?
-        get() = prefs.getString("session_key_enc", null)?.let { runCatching { Crypto.decrypt(it) }.getOrNull() }
-        set(v) {
-            if (v.isNullOrBlank()) prefs.edit().remove("session_key_enc").apply()
-            else prefs.edit().putString("session_key_enc", Crypto.encrypt(v.trim())).apply()
-        }
+    fun setCredential(provider: String, value: String?) {
+        val e = prefs.edit()
+        if (value.isNullOrBlank()) e.remove("cred_$provider") else e.putString("cred_$provider", Crypto.encrypt(value.trim()))
+        // credenziale cambiata: dimentico cache, errori e finestre di quel servizio
+        prefs.all.keys.filter { it.startsWith("cache_${provider}_") }.forEach { e.remove(it) }
+        e.apply()
+        errors = errors - provider
+        authWarned = authWarned - provider
+        lastWindows = lastWindows.filter { it.provider != provider }
+    }
 
-    /** Dimentica la sessione e i dati legati all'account. */
-    fun clearAccount() {
-        prefs.edit().remove("session_key_enc").remove("org_id").remove("last_json")
-            .remove("state").remove("auth_warned").putLong("last_check", 0L).apply()
+    fun cache(provider: String, key: String): String? = prefs.getString("cache_${provider}_$key", null)
+    fun setCache(provider: String, key: String, value: String?) {
+        prefs.edit().apply { if (value == null) remove("cache_${provider}_$key") else putString("cache_${provider}_$key", value) }.apply()
     }
 
     private fun intList(s: String?): List<Int>? =

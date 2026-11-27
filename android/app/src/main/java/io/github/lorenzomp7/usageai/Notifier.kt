@@ -22,7 +22,7 @@ object Notifier {
         )
         nm.createNotificationChannel(
             NotificationChannel(CH_ACCOUNT, "Accesso", NotificationManager.IMPORTANCE_DEFAULT)
-                .apply { description = "Sessione di claude.ai scaduta" }
+                .apply { description = "Accesso a un servizio scaduto" }
         )
     }
 
@@ -33,9 +33,9 @@ object Notifier {
     fun alert(context: Context, alert: Alert) =
         post(context, CH_ALERTS, alert.key.hashCode(), alert.title, alert.text)
 
-    fun authExpired(context: Context) =
-        post(context, CH_ACCOUNT, 1, "UsageAI: sessione scaduta",
-            "Apri l'app e rifai l'accesso a claude.ai per continuare a ricevere gli avvisi.")
+    fun authExpired(context: Context, serviceName: String, detail: String) =
+        post(context, CH_ACCOUNT, ("auth:$serviceName").hashCode(), "UsageAI: accesso a $serviceName scaduto",
+            detail.ifBlank { "Apri l'app e rifai l'accesso per continuare a ricevere gli avvisi." })
 
     private fun post(context: Context, channel: String, id: Int, title: String, text: String) {
         if (!canNotify(context)) return

@@ -1,4 +1,4 @@
-"""Logica pura: lettura della risposta /usage, soglie, ritmo settimanale.
+"""Logica pura comune a tutti i servizi: finestre di consumo, soglie, ritmo.
 
 Niente rete, niente interfaccia: tutto qui è testabile da solo.
 """
@@ -7,31 +7,44 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-FIVE_HOURS = timedelta(hours=5)
-SEVEN_DAYS = timedelta(days=7)
+# Finestre fino a 12 ore sono "brevi" (sessioni), le altre "lunghe" (settimana, mese).
+SHORT_WINDOW_MAX = timedelta(hours=12)
 # Se l'orario di reset si sposta di più di così, è iniziata una finestra nuova.
 NEW_WINDOW_TOLERANCE = timedelta(minutes=30)
-# Sotto questa percentuale l'avviso sul ritmo non scatta (a inizio settimana è rumore).
+# Sotto questa percentuale l'avviso sul ritmo non scatta (a inizio periodo è rumore).
 PACE_MIN_UTILIZATION = 20.0
+
+PROVIDER_NAMES = {
+    "claude": "Claude",
+    "codex": "ChatGPT/Codex",
+    "gemini": "Gemini",
+    "cursor": "Cursor",
+    "copilot": "Copilot",
+}
 
 
 @dataclass(frozen=True)
 class Window:
-    key: str                  # "five_hour", "seven_day", "seven_day_opus", ...
-    label: str                # testo per l'utente
+    provider: str             # "claude", "codex", ...
+    key: str                  # unico per tutti i servizi, es. "claude:five_hour"
+    label: str                # es. "Sessione 5 ore"
     utilization: float        # 0-100
     resets_at: datetime | None
-    length: timedelta
+    length: timedelta | None  # durata della finestra, se nota
 
     @property
-    def is_weekly(self) -> bool:
-        return self.key.startswith("seven_day")
+    def is_long(self) -> bool:
+        return self.length is None or self.length > SHORT_WINDOW_MAX
+
+    @property
+    def full_label(self) -> str:
+        return f"{PROVIDER_NAMES.get(self.provider, self.provider)} · {self.label}"
 
 
 @dataclass
 class Settings:
-    thresholds_5h: list[int] = field(default_factory=lambda: [80])
-    thresholds_week: list[int] = field(default_factory=lambda: [50, 75, 90])
+    thresholds_short: list[int] = field(default_factory=lambda: [80])
+    thresholds_long: list[int] = field(default_factory=lambda: [50, 75, 90])
     pace_enabled: bool = True
     pace_margin: int = 10      # punti percentuali oltre il ritmo "giusto"
     interval_min: int = 5      # solo Windows
@@ -51,22 +64,11 @@ class Alert:
     text: str
 
 
-def _label_for(key: str) -> str:
-    if key == "five_hour":
-        return "Sessione 5 ore"
-    if key == "seven_day":
-        return "Settimana (tutti i modelli)"
-    if key.startswith("seven_day_"):
-        name = key[len("seven_day_"):].replace("_", " ").strip()
-        return f"Settimana · {name.title()}"
-    return key.replace("_", " ")
-
-
 def parse_datetime(value) -> datetime | None:
     if not value or not isinstance(value, str):
         return None
     try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
     if dt.tzinfo is None:
@@ -74,42 +76,28 @@ def parse_datetime(value) -> datetime | None:
     return dt
 
 
-def parse_usage(data: dict) -> list[Window]:
-    """Trasforma la risposta JSON di /usage in finestre ordinate (5 ore, settimana, altre)."""
-    windows: list[Window] = []
-    if not isinstance(data, dict):
-        return windows
-    for key, value in data.items():
-        if key != "five_hour" and not key.startswith("seven_day"):
-            continue
-        if not isinstance(value, dict):
-            continue
-        util = value.get("utilization")
-        if not isinstance(util, (int, float)) or isinstance(util, bool):
-            continue
-        windows.append(Window(
-            key=key,
-            label=_label_for(key),
-            utilization=max(0.0, float(util)),
-            resets_at=parse_datetime(value.get("resets_at")),
-            length=FIVE_HOURS if key == "five_hour" else SEVEN_DAYS,
-        ))
-
-    def order(w: Window):
-        return (0 if w.key == "five_hour" else 1 if w.key == "seven_day" else 2, w.key)
-
-    windows.sort(key=order)
-    return windows
+def window_label(length: timedelta | None) -> str:
+    if length is None:
+        return "Periodo"
+    hours = length.total_seconds() / 3600
+    if abs(hours - 5) < 0.1:
+        return "Sessione 5 ore"
+    if abs(hours - 24 * 7) < 1:
+        return "Settimana"
+    if 27 * 24 <= hours <= 32 * 24:
+        return "Mese"
+    if hours < 48:
+        return f"Finestra {hours:.0f} ore"
+    return f"Finestra {hours / 24:.0f} giorni"
 
 
 def expected_utilization(window: Window, now: datetime) -> float | None:
     """Percentuale che avresti consumato andando a ritmo costante fino al reset."""
-    if window.resets_at is None:
+    if window.resets_at is None or not window.length:
         return None
     remaining = window.resets_at - now
     elapsed = 1.0 - remaining / window.length
-    elapsed = min(1.0, max(0.0, elapsed))
-    return elapsed * 100.0
+    return min(1.0, max(0.0, elapsed)) * 100.0
 
 
 def pace_text(window: Window, now: datetime) -> str | None:
@@ -141,7 +129,8 @@ def format_reset(resets_at: datetime | None, now: datetime) -> str:
     minutes = rem // 60
     local = resets_at.astimezone()
     days_it = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
-    when = f"{days_it[local.weekday()]} {local:%H:%M}"
+    when = f"{days_it[local.weekday()]} {local.day:02d}/{local.month:02d} {local:%H:%M}" if hours >= 24 * 6 \
+        else f"{days_it[local.weekday()]} {local:%H:%M}"
     if hours >= 24:
         return f"reset {when} (tra {hours // 24} g {hours % 24} h)"
     return f"reset {when} (tra {hours} h {minutes} min)"
@@ -150,41 +139,42 @@ def format_reset(resets_at: datetime | None, now: datetime) -> str:
 def evaluate(windows: list[Window], settings: Settings,
              state: dict[str, WindowState], now: datetime
              ) -> tuple[list[Alert], dict[str, WindowState]]:
-    """Decide quali notifiche mandare. Ogni soglia scatta una volta sola per finestra."""
+    """Decide quali notifiche mandare. Ogni soglia scatta una volta sola per finestra.
+
+    Lo stato dei servizi non presenti in `windows` viene conservato (un servizio che oggi
+    non risponde non deve far ripartire le sue notifiche quando torna).
+    """
     alerts: list[Alert] = []
-    new_state: dict[str, WindowState] = {}
+    new_state: dict[str, WindowState] = dict(state)
 
     for w in windows:
         old = state.get(w.key)
         if old is None or not _same_window(old.resets_at, w.resets_at):
-            # Finestra nuova (o primo avvio): si riparte da zero. Le soglie già superate
-            # al primo avvio vengono notificate, così sai subito dove sei.
             ws = WindowState(resets_at=w.resets_at.isoformat() if w.resets_at else None)
         else:
-            ws = WindowState(resets_at=old.resets_at,
-                             notified=list(old.notified),
+            ws = WindowState(resets_at=old.resets_at, notified=list(old.notified),
                              pace_notified=old.pace_notified)
 
-        thresholds = settings.thresholds_5h if w.key == "five_hour" else settings.thresholds_week
+        thresholds = settings.thresholds_long if w.is_long else settings.thresholds_short
         crossed = sorted(t for t in thresholds if w.utilization >= t and t not in ws.notified)
         if crossed:
             top = crossed[-1]
             alerts.append(Alert(
                 key=w.key,
-                title=f"{w.label}: {w.utilization:.0f}% (soglia {top}%)",
+                title=f"{w.full_label}: {w.utilization:.0f}% (soglia {top}%)",
                 text=format_reset(w.resets_at, now),
             ))
             ws.notified = sorted(set(ws.notified) | set(crossed))
 
-        if w.is_weekly and settings.pace_enabled:
+        if w.is_long and settings.pace_enabled:
             exp = expected_utilization(w, now)
             if exp is not None:
                 ahead = w.utilization - exp
                 if (ahead > settings.pace_margin and w.utilization >= PACE_MIN_UTILIZATION
                         and not ws.pace_notified):
                     alerts.append(Alert(
-                        key=w.key + "_pace",
-                        title=f"{w.label}: stai andando troppo veloce",
+                        key=w.key + ":pace",
+                        title=f"{w.full_label}: stai andando troppo veloce",
                         text=(f"Hai usato il {w.utilization:.0f}%, a ritmo costante saresti al "
                               f"{exp:.0f}%. {format_reset(w.resets_at, now)}"),
                     ))
@@ -204,18 +194,3 @@ def parse_thresholds(text: str) -> list[int]:
     if any(v < 1 or v > 100 for v in values):
         raise ValueError("Le soglie devono stare tra 1 e 100")
     return values
-
-
-def pick_org_id(orgs) -> str | None:
-    """Sceglie l'organizzazione con l'abbonamento Claude (Pro/Max) tra quelle dell'account."""
-    if not isinstance(orgs, list):
-        return None
-    candidates = [o for o in orgs if isinstance(o, dict) and o.get("uuid")]
-    for o in candidates:
-        caps = o.get("capabilities") or []
-        if any(isinstance(c, str) and c.startswith("claude_") for c in caps):
-            return o["uuid"]
-    for o in candidates:
-        if "chat" in (o.get("capabilities") or []):
-            return o["uuid"]
-    return candidates[0]["uuid"] if candidates else None

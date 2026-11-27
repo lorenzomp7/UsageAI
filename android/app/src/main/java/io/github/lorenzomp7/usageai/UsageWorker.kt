@@ -10,45 +10,55 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
-/** Un controllo completo: scarica, valuta le soglie, notifica, aggiorna il widget. */
+/** Un controllo completo di tutti i servizi configurati: scarica, valuta, notifica, aggiorna il widget. */
 object UsageChecker {
     suspend fun check(context: Context) {
         val store = Store(context)
-        if (store.sessionKey == null) {
-            store.lastError = "Accesso a claude.ai non ancora fatto"
-            UsageWidget.updateAll(context)
-            return
-        }
-        try {
-            val json = ClaudeApi(context, store).fetchUsageJson()
-            val windows = parseUsage(json)
-            if (windows.isEmpty()) throw ApiException("La risposta non contiene dati di consumo")
-            val now = Instant.now()
-            val (alerts, newState) = evaluate(windows, store.settings, store.state, now)
-            store.state = newState
-            store.lastJson = json
-            store.lastCheck = now.toEpochMilli()
-            store.lastError = null
-            store.authWarned = false
-            alerts.forEach { Notifier.alert(context, it) }
-        } catch (e: AuthException) {
-            store.lastError = e.message
-            if (!store.authWarned) {
-                store.authWarned = true
-                Notifier.authExpired(context)
+        val http = Http(context)
+        val now = Instant.now()
+        val previous = store.lastWindows
+        val errors = store.errors.toMutableMap()
+        val warned = store.authWarned.toMutableSet()
+        val fresh = mutableListOf<UsageWindow>()
+        val kept = mutableListOf<UsageWindow>()
+        val active = SERVICES.mapNotNull { s -> store.credential(s.id)?.let { s to it } }
+
+        for ((service, credential) in active) {
+            try {
+                val ws = service.fetch(http, store, credential)
+                fresh += ws
+                errors.remove(service.id)
+                warned.remove(service.id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AuthException) {
+                errors[service.id] = e.message ?: "Accesso scaduto"
+                kept += previous.filter { it.provider == service.id }
+                if (service.id !in warned) {
+                    warned += service.id
+                    Notifier.authExpired(context, service.name, e.message ?: "")
+                }
+            } catch (e: ApiException) {
+                errors[service.id] = e.message ?: "Errore"
+                kept += previous.filter { it.provider == service.id }
+            } catch (e: Exception) {
+                errors[service.id] = "Errore inatteso: ${e.javaClass.simpleName}"
+                kept += previous.filter { it.provider == service.id }
             }
-        } catch (e: ApiException) {
-            store.lastError = e.message
-        } catch (e: IOException) {
-            store.lastError = "Rete non disponibile"
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            store.lastError = "Errore inatteso: ${e.javaClass.simpleName}"
         }
+
+        val activeIds = active.map { it.first.id }.toSet()
+        val (alerts, newState) = evaluate(fresh, store.settings, store.state, now)
+        store.state = newState
+        store.lastWindows = (fresh + kept).sortedBy { w -> SERVICES.indexOfFirst { it.id == w.provider } }
+        store.errors = errors.filterKeys { it in activeIds }
+        store.authWarned = warned
+        store.lastCheck = now.toEpochMilli()
+        alerts.forEach { Notifier.alert(context, it) }
         UsageWidget.updateAll(context)
     }
 }

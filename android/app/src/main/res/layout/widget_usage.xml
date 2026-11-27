@@ -5,74 +5,189 @@
     android:layout_height="match_parent"
     android:background="@drawable/widget_bg"
     android:orientation="vertical"
-    android:padding="14dp">
+    android:padding="12dp">
 
     <LinearLayout
+        android:id="@+id/w_row1"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal">
-        <TextView
-            android:layout_width="0dp"
+        android:layout_marginTop="0dp"
+        android:orientation="vertical"
+        android:visibility="gone">
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/label_five"
-            android:textColor="#CCFFFFFF"
-            android:textSize="13sp" />
-        <TextView
-            android:id="@+id/w_five_value"
-            android:layout_width="wrap_content"
+            android:orientation="horizontal">
+            <TextView
+                android:id="@+id/w_label1"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="#CCFFFFFF"
+                android:textSize="12sp" />
+            <TextView
+                android:id="@+id/w_value1"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+        <ProgressBar
+            android:id="@+id/w_bar1"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textColor="#FFFFFFFF"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            android:max="100" />
+        <TextView
+            android:id="@+id/w_sub1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#99FFFFFF"
+            android:textSize="10sp" />
     </LinearLayout>
-    <ProgressBar
-        android:id="@+id/w_five_bar"
-        style="?android:attr/progressBarStyleHorizontal"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:max="100" />
-    <TextView
-        android:id="@+id/w_five_reset"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:maxLines="1"
-        android:textColor="#99FFFFFF"
-        android:textSize="11sp" />
-
     <LinearLayout
+        android:id="@+id/w_row2"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:orientation="horizontal">
-        <TextView
-            android:layout_width="0dp"
+        android:layout_marginTop="6dp"
+        android:orientation="vertical"
+        android:visibility="gone">
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/label_week"
-            android:textColor="#CCFFFFFF"
-            android:textSize="13sp" />
-        <TextView
-            android:id="@+id/w_week_value"
-            android:layout_width="wrap_content"
+            android:orientation="horizontal">
+            <TextView
+                android:id="@+id/w_label2"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="#CCFFFFFF"
+                android:textSize="12sp" />
+            <TextView
+                android:id="@+id/w_value2"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+        <ProgressBar
+            android:id="@+id/w_bar2"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textColor="#FFFFFFFF"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            android:max="100" />
+        <TextView
+            android:id="@+id/w_sub2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#99FFFFFF"
+            android:textSize="10sp" />
     </LinearLayout>
-    <ProgressBar
-        android:id="@+id/w_week_bar"
-        style="?android:attr/progressBarStyleHorizontal"
+    <LinearLayout
+        android:id="@+id/w_row3"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:max="100" />
+        android:layout_marginTop="6dp"
+        android:orientation="vertical"
+        android:visibility="gone">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <TextView
+                android:id="@+id/w_label3"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="#CCFFFFFF"
+                android:textSize="12sp" />
+            <TextView
+                android:id="@+id/w_value3"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+        <ProgressBar
+            android:id="@+id/w_bar3"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100" />
+        <TextView
+            android:id="@+id/w_sub3"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#99FFFFFF"
+            android:textSize="10sp" />
+    </LinearLayout>
+    <LinearLayout
+        android:id="@+id/w_row4"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:orientation="vertical"
+        android:visibility="gone">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <TextView
+                android:id="@+id/w_label4"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="#CCFFFFFF"
+                android:textSize="12sp" />
+            <TextView
+                android:id="@+id/w_value4"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+        <ProgressBar
+            android:id="@+id/w_bar4"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100" />
+        <TextView
+            android:id="@+id/w_sub4"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#99FFFFFF"
+            android:textSize="10sp" />
+    </LinearLayout>
+
     <TextView
-        android:id="@+id/w_week_reset"
+        android:id="@+id/w_empty"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:maxLines="2"
-        android:textColor="#99FFFFFF"
-        android:textSize="11sp" />
+        android:text="@string/widget_empty"
+        android:textColor="#CCFFFFFF"
+        android:textSize="13sp"
+        android:visibility="gone" />
 
     <TextView
         android:id="@+id/w_footer"
@@ -80,6 +195,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
         android:maxLines="1"
+        android:ellipsize="end"
         android:textColor="#66FFFFFF"
         android:textSize="10sp" />
 </LinearLayout>

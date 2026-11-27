@@ -2,7 +2,6 @@ package io.github.lorenzomp7.usageai
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -11,8 +10,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.time.Duration
 import java.time.Instant
@@ -22,26 +20,48 @@ import java.time.format.DateTimeParseException
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** Logica pura (niente Android): stessa logica dell'app Windows (windows/claude_usage_alert/core.py). */
+/**
+ * Logica pura comune a tutti i servizi (niente Android).
+ * È la stessa dell'app Windows: windows/usageai/core.py.
+ */
 
-val FIVE_HOURS: Duration = Duration.ofHours(5)
-val SEVEN_DAYS: Duration = Duration.ofDays(7)
+class AuthException(message: String) : Exception(message)
+class ApiException(message: String, val status: Int = 0, val body: String = "") : Exception(message)
+
+/** Accetta un header Cookie completo oppure il solo valore del cookie principale. */
+fun cookieHeader(credential: String, defaultName: String): String {
+    var c = credential.trim()
+    if (c.lowercase().startsWith("cookie:")) c = c.substring(7).trim()
+    return if ('=' in c) c else "$defaultName=$c"
+}
+
+val SHORT_WINDOW_MAX: Duration = Duration.ofHours(12)
 private val NEW_WINDOW_TOLERANCE: Duration = Duration.ofMinutes(30)
 private const val PACE_MIN_UTILIZATION = 20.0
 
+val PROVIDER_NAMES = linkedMapOf(
+    "claude" to "Claude",
+    "codex" to "ChatGPT/Codex",
+    "gemini" to "Gemini",
+    "cursor" to "Cursor",
+    "copilot" to "Copilot",
+)
+
 data class UsageWindow(
+    val provider: String,
     val key: String,
     val label: String,
     val utilization: Double,
     val resetsAt: Instant?,
-    val length: Duration,
+    val length: Duration?,
 ) {
-    val isWeekly: Boolean get() = key.startsWith("seven_day")
+    val isLong: Boolean get() = length == null || length > SHORT_WINDOW_MAX
+    val fullLabel: String get() = "${PROVIDER_NAMES[provider] ?: provider} · $label"
 }
 
 data class AlertSettings(
-    val thresholds5h: List<Int> = listOf(80),
-    val thresholdsWeek: List<Int> = listOf(50, 75, 90),
+    val thresholdsShort: List<Int> = listOf(80),
+    val thresholdsLong: List<Int> = listOf(50, 75, 90),
     val paceEnabled: Boolean = true,
     val paceMargin: Int = 10,
 )
@@ -54,66 +74,36 @@ data class WindowState(
 
 data class Alert(val key: String, val title: String, val text: String)
 
-fun labelFor(key: String): String = when {
-    key == "five_hour" -> "Sessione 5 ore"
-    key == "seven_day" -> "Settimana (tutti i modelli)"
-    key.startsWith("seven_day_") -> "Settimana · " + key.removePrefix("seven_day_")
-        .replace('_', ' ').trim().split(' ')
-        .joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
-    else -> key.replace('_', ' ')
-}
+// ---------- utilità ----------
 
 fun parseInstant(value: String?): Instant? {
     if (value.isNullOrBlank()) return null
+    val v = value.trim()
     return try {
-        OffsetDateTime.parse(value).toInstant()
+        OffsetDateTime.parse(v).toInstant()
     } catch (e: DateTimeParseException) {
-        try { Instant.parse(value) } catch (e2: DateTimeParseException) { null }
+        try { Instant.parse(v) } catch (e2: DateTimeParseException) { null }
     }
 }
 
-private fun JsonElement?.asObjectOrNull(): JsonObject? = this as? JsonObject
-private fun JsonElement?.asPrimitiveOrNull(): JsonPrimitive? = this as? JsonPrimitive
-
-/** Risposta JSON di /usage -> finestre ordinate (5 ore, settimana, altre settimanali). */
-fun parseUsage(json: String): List<UsageWindow> {
-    val root = Json.parseToJsonElement(json).asObjectOrNull() ?: return emptyList()
-    val out = mutableListOf<UsageWindow>()
-    for ((key, value) in root) {
-        if (key != "five_hour" && !key.startsWith("seven_day")) continue
-        val obj = value.asObjectOrNull() ?: continue
-        val prim = obj["utilization"].asPrimitiveOrNull() ?: continue
-        if (prim.isString) continue
-        val util = prim.doubleOrNull ?: continue
-        out += UsageWindow(
-            key = key,
-            label = labelFor(key),
-            utilization = util.coerceAtLeast(0.0),
-            resetsAt = parseInstant(obj["resets_at"].asPrimitiveOrNull()?.contentOrNull),
-            length = if (key == "five_hour") FIVE_HOURS else SEVEN_DAYS,
-        )
+fun windowLabel(length: Duration?): String {
+    if (length == null) return "Periodo"
+    val hours = length.seconds / 3600.0
+    return when {
+        abs(hours - 5) < 0.1 -> "Sessione 5 ore"
+        abs(hours - 24 * 7) < 1 -> "Settimana"
+        hours in (27.0 * 24)..(32.0 * 24) -> "Mese"
+        hours < 48 -> "Finestra ${hours.roundToInt()} ore"
+        else -> "Finestra ${(hours / 24).roundToInt()} giorni"
     }
-    return out.sortedWith(compareBy({ if (it.key == "five_hour") 0 else if (it.key == "seven_day") 1 else 2 }, { it.key }))
-}
-
-/** Sceglie l'organizzazione con l'abbonamento Claude tra quelle restituite da /api/organizations. */
-fun pickOrgId(json: String): String? {
-    val arr = Json.parseToJsonElement(json) as? JsonArray ?: return null
-    val orgs = arr.mapNotNull { it.asObjectOrNull() }
-        .filter { it["uuid"].asPrimitiveOrNull()?.contentOrNull != null }
-    fun caps(o: JsonObject): List<String> = (o["capabilities"] as? JsonArray)
-        ?.mapNotNull { it.asPrimitiveOrNull()?.contentOrNull } ?: emptyList()
-    val chosen = orgs.firstOrNull { o -> caps(o).any { it.startsWith("claude_") } }
-        ?: orgs.firstOrNull { o -> "chat" in caps(o) }
-        ?: orgs.firstOrNull()
-    return chosen?.get("uuid")?.jsonPrimitive?.contentOrNull
 }
 
 fun expectedUtilization(w: UsageWindow, now: Instant): Double? {
     val reset = w.resetsAt ?: return null
+    val len = w.length ?: return null
+    if (len.isZero || len.isNegative) return null
     val remaining = Duration.between(now, reset).toMillis().toDouble()
-    val elapsed = (1.0 - remaining / w.length.toMillis()).coerceIn(0.0, 1.0)
-    return elapsed * 100.0
+    return (1.0 - remaining / len.toMillis()).coerceIn(0.0, 1.0) * 100.0
 }
 
 fun paceText(w: UsageWindow, now: Instant): String? {
@@ -134,8 +124,10 @@ fun formatReset(resetsAt: Instant?, now: Instant, zone: ZoneId = ZoneId.systemDe
     if (secs <= 0) return "reset in corso"
     val hours = secs / 3600
     val minutes = (secs % 3600) / 60
-    val local = resetsAt.atZone(zone)
-    val whenText = "%s %02d:%02d".format(DAYS_IT[local.dayOfWeek.value - 1], local.hour, local.minute)
+    val t = resetsAt.atZone(zone)
+    val day = DAYS_IT[t.dayOfWeek.value - 1]
+    val whenText = if (hours >= 24 * 6) "%s %02d/%02d %02d:%02d".format(day, t.dayOfMonth, t.monthValue, t.hour, t.minute)
+    else "%s %02d:%02d".format(day, t.hour, t.minute)
     return if (hours >= 24) "reset $whenText (tra ${hours / 24} g ${hours % 24} h)"
     else "reset $whenText (tra $hours h $minutes min)"
 }
@@ -148,7 +140,10 @@ private fun sameWindow(oldIso: String?, new: Instant?): Boolean {
 
 private fun pct(v: Double) = v.roundToInt().toString()
 
-/** Decide le notifiche. Ogni soglia scatta una volta sola per finestra. */
+/**
+ * Decide le notifiche. Ogni soglia scatta una volta sola per finestra.
+ * Lo stato dei servizi assenti da [windows] resta com'è.
+ */
 fun evaluate(
     windows: List<UsageWindow>,
     settings: AlertSettings,
@@ -156,7 +151,7 @@ fun evaluate(
     now: Instant,
 ): Pair<List<Alert>, Map<String, WindowState>> {
     val alerts = mutableListOf<Alert>()
-    val newState = mutableMapOf<String, WindowState>()
+    val newState = state.toMutableMap()
 
     for (w in windows) {
         val old = state[w.key]
@@ -164,25 +159,25 @@ fun evaluate(
             WindowState(resetsAt = w.resetsAt?.toString())
         } else old
 
-        val thresholds = if (w.key == "five_hour") settings.thresholds5h else settings.thresholdsWeek
+        val thresholds = if (w.isLong) settings.thresholdsLong else settings.thresholdsShort
         val crossed = thresholds.filter { w.utilization >= it && it !in ws.notified }.sorted()
         if (crossed.isNotEmpty()) {
             alerts += Alert(
                 key = w.key,
-                title = "${w.label}: ${pct(w.utilization)}% (soglia ${crossed.last()}%)",
+                title = "${w.fullLabel}: ${pct(w.utilization)}% (soglia ${crossed.last()}%)",
                 text = formatReset(w.resetsAt, now),
             )
             ws = ws.copy(notified = (ws.notified + crossed).toSortedSet().toList())
         }
 
-        if (w.isWeekly && settings.paceEnabled) {
+        if (w.isLong && settings.paceEnabled) {
             val exp = expectedUtilization(w, now)
             if (exp != null) {
                 val ahead = w.utilization - exp
                 if (ahead > settings.paceMargin && w.utilization >= PACE_MIN_UTILIZATION && !ws.paceNotified) {
                     alerts += Alert(
-                        key = w.key + "_pace",
-                        title = "${w.label}: stai andando troppo veloce",
+                        key = w.key + ":pace",
+                        title = "${w.fullLabel}: stai andando troppo veloce",
                         text = "Hai usato il ${pct(w.utilization)}%, a ritmo costante saresti al " +
                             "${pct(exp)}%. ${formatReset(w.resetsAt, now)}",
                     )
@@ -207,7 +202,9 @@ fun parseThresholds(text: String): List<Int> {
     return values
 }
 
-// --- Serializzazione dello stato (SharedPreferences) ---
+// ---------- serializzazione (SharedPreferences) ----------
+
+private fun JsonObject.str(k: String): String? = (this[k] as? JsonPrimitive)?.contentOrNull
 
 fun stateToJson(state: Map<String, WindowState>): String = buildJsonObject {
     for ((k, v) in state) {
@@ -221,13 +218,53 @@ fun stateToJson(state: Map<String, WindowState>): String = buildJsonObject {
 
 fun stateFromJson(json: String?): Map<String, WindowState> {
     if (json.isNullOrBlank()) return emptyMap()
-    val root = try { Json.parseToJsonElement(json).jsonObject } catch (e: Exception) { return emptyMap() }
-    return root.mapNotNull { (k, v) ->
-        val o = v.asObjectOrNull() ?: return@mapNotNull null
+    val root = runCatching { Json.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return emptyMap()
+    return root.mapNotNull { (k0, v) ->
+        val o = v as? JsonObject ?: return@mapNotNull null
+        val k = if (':' in k0) k0 else "claude:$k0"   // versione 1: solo Claude, chiavi senza prefisso
         k to WindowState(
-            resetsAt = o["resets_at"].asPrimitiveOrNull()?.contentOrNull,
-            notified = (o["notified"] as? JsonArray)?.mapNotNull { it.asPrimitiveOrNull()?.intOrNull } ?: emptyList(),
-            paceNotified = o["pace_notified"].asPrimitiveOrNull()?.booleanOrNull ?: false,
+            resetsAt = o.str("resets_at"),
+            notified = (o["notified"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.intOrNull } ?: emptyList(),
+            paceNotified = (o["pace_notified"] as? JsonPrimitive)?.booleanOrNull ?: false,
         )
     }.toMap()
+}
+
+fun windowsToJson(windows: List<UsageWindow>): String = buildJsonArray {
+    for (w in windows) {
+        add(buildJsonObject {
+            put("provider", w.provider)
+            put("key", w.key)
+            put("label", w.label)
+            put("utilization", w.utilization)
+            put("resets_at", w.resetsAt?.toString())
+            put("length_s", w.length?.seconds)
+        })
+    }
+}.toString()
+
+fun windowsFromJson(json: String?): List<UsageWindow> {
+    if (json.isNullOrBlank()) return emptyList()
+    val arr = runCatching { Json.parseToJsonElement(json) as? JsonArray }.getOrNull() ?: return emptyList()
+    return arr.mapNotNull { e ->
+        val o = e as? JsonObject ?: return@mapNotNull null
+        UsageWindow(
+            provider = o.str("provider") ?: return@mapNotNull null,
+            key = o.str("key") ?: return@mapNotNull null,
+            label = o.str("label") ?: "",
+            utilization = (o["utilization"] as? JsonPrimitive)?.doubleOrNull ?: return@mapNotNull null,
+            resetsAt = parseInstant(o.str("resets_at")),
+            length = (o["length_s"] as? JsonPrimitive)?.longOrNull?.let { Duration.ofSeconds(it) },
+        )
+    }
+}
+
+fun mapToJson(map: Map<String, String>): String = buildJsonObject {
+    for ((k, v) in map) put(k, v)
+}.toString()
+
+fun mapFromJson(json: String?): Map<String, String> {
+    if (json.isNullOrBlank()) return emptyMap()
+    val o = runCatching { Json.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return emptyMap()
+    return o.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.contentOrNull?.let { k to it } }.toMap()
 }

@@ -20,7 +20,9 @@ Ci sono due app che fanno la stessa cosa:
 
 ## Scaricare le app
 
-Ogni push su `main` compila tutto con GitHub Actions e aggiorna la release **[Ultima build](../../releases/tag/ultima-build)**:
+Ogni push su `main` che tocca `android/` o `windows/` compila l'app corrispondente con GitHub Actions e aggiorna la release **[Ultima build](../../releases/tag/ultima-build)**. Se un push non fa partire la build (capita con alcuni push fatti da integrazioni), il workflow **Sentinella build** se ne accorge e la avvia da solo entro mezz'ora. Tutto gratis: le repo pubbliche non pagano i minuti di Actions.
+
+Nota: GitHub sospende i workflow programmati (la Sentinella) dopo 60 giorni senza attività sulla repo; li riattivi dalla scheda Actions. Le build sui push restano sempre attive.
 
 - `UsageAI.apk` → aprilo dal telefono e installalo (va consentita l'installazione da fonti sconosciute per il browser).
 - `UsageAI.exe` → avvialo su Windows. SmartScreen potrebbe avvisarti perché l'exe non è firmato: «Ulteriori informazioni» → «Esegui comunque».

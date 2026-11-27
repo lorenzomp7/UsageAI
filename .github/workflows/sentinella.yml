@@ -1,0 +1,47 @@
+name: Sentinella build
+
+# Rete di sicurezza: se un push su main non ha fatto partire le build (succede con alcuni
+# push fatti da app e integrazioni), questa le avvia da sola entro mezz'ora.
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  controlla:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Avvia le build mancanti
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          check() {
+            local workflow=$1 dir=$2
+            # Se c'è già una build in coda o in corso, non faccio nulla.
+            active=$(gh run list --workflow "$workflow" --branch main --limit 5 \
+              --json status --jq '[.[] | select(.status != "completed")] | length')
+            if [ "$active" != "0" ]; then echo "$workflow: build già in corso"; return; fi
+            # Ultimo commit compilato con successo.
+            last=$(gh run list --workflow "$workflow" --branch main --status success --limit 1 \
+              --json headSha --jq '.[0].headSha // ""')
+            if [ "$last" = "$head" ]; then echo "$workflow: già compilato $head"; return; fi
+            if [ -n "$last" ] && git cat-file -e "$last" 2>/dev/null \
+               && git diff --quiet "$last" "$head" -- "$dir" ".github/workflows/$workflow"; then
+              echo "$workflow: nessuna modifica in $dir da $last"; return
+            fi
+            echo "$workflow: avvio la build di $head"
+            gh workflow run "$workflow" --ref main
+          }
+          check build-android.yml android
+          check build-windows.yml windows

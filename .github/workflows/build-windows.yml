@@ -11,6 +11,11 @@ on:
 permissions:
   contents: write
 
+# Un solo build per volta: un push nuovo annulla quello vecchio ancora in corso.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: windows-latest

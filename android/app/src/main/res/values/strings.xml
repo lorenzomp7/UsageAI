@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">UsageAI</string>
+    <string name="widget_name">Consumo Claude</string>
+    <string name="widget_description">Sessione 5 ore e settimana, con il ritmo</string>
+    <string name="label_five">5 ore</string>
+    <string name="label_week">Settimana</string>
+</resources>

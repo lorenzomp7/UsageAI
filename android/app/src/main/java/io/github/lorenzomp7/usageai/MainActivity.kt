@@ -39,12 +39,17 @@ class MainActivity : Activity() {
     private lateinit var paceBox: CheckBox
     private lateinit var marginField: EditText
     private lateinit var dailyBox: CheckBox
+    private lateinit var notifBox: CheckBox
+    private lateinit var shortBox: CheckBox
+    private lateinit var longBox: CheckBox
+    private lateinit var authBox: CheckBox
+    private lateinit var backgroundBox: CheckBox
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = Store(this)
         Notifier.createChannels(this)
-        UsageWorker.schedule(this)
+        UsageWorker.applySetting(this)
         if (Build.VERSION.SDK_INT >= 33 && !Notifier.canNotify(this)) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
         }
@@ -115,20 +120,21 @@ class MainActivity : Activity() {
         col.addView(servicesBox)
 
         col.addView(section("Avvisi"))
-        col.addView(text("Valgono per tutti i servizi.", 12f, dim = 0.6f))
-        col.addView(text("Soglie sessioni brevi, es. 5 ore (%)", 14f))
-        tShortField = field("es. 80").also { col.addView(it) }
-        col.addView(text("Soglie periodi lunghi, settimana o mese (%)", 14f))
-        tLongField = field("es. 50, 75, 90").also { col.addView(it) }
-        col.addView(text("Più soglie separate da virgola. Vuoto = nessun avviso.", 12f, dim = 0.6f))
-        paceBox = CheckBox(this).apply { text = "Avvisami se consumo un periodo lungo più veloce del ritmo costante" }
-        col.addView(paceBox)
-        col.addView(text("…oltre quanti punti di anticipo", 14f))
-        marginField = field("10").also { col.addView(it) }
-        dailyBox = CheckBox(this).apply {
-            text = "Avvisami se in un giorno supero la quota giornaliera (100% / giorni del periodo: settimana = 14,29% al giorno)"
-        }
-        col.addView(dailyBox)
+        col.addView(text("Valgono per tutti i servizi. Ogni avviso ha il suo interruttore.", 12f, dim = 0.6f))
+        fun check(label: String) = CheckBox(this).apply { text = label }.also { col.addView(it) }
+        fun indent(v: View) = v.apply { setPadding(dp(32), paddingTop, paddingRight, paddingBottom) }
+        notifBox = check("Notifiche attive (interruttore generale)")
+        backgroundBox = check("Controllo automatico ogni 15 minuti")
+        shortBox = check("Soglie delle sessioni brevi (es. 5 ore)")
+        tShortField = field("es. 80").also { col.addView(indent(it)) }
+        longBox = check("Soglie dei periodi lunghi (settimana o mese)")
+        tLongField = field("es. 50, 75, 90").also { col.addView(indent(it)) }
+        col.addView(indent(text("Più soglie separate da virgola.", 12f, dim = 0.6f)))
+        paceBox = check("Avviso sul ritmo: periodo lungo consumato più veloce del tempo passato")
+        col.addView(indent(text("…oltre quanti punti di anticipo", 14f)))
+        marginField = field("10").also { col.addView(indent(it)) }
+        dailyBox = check("Quota giornaliera: 100% / giorni del periodo (settimana = 14,29% al giorno)")
+        authBox = check("Avviso quando l'accesso a un servizio scade")
         col.addView(button("Salva impostazioni") { saveSettings() })
 
         col.addView(text(
@@ -148,10 +154,26 @@ class MainActivity : Activity() {
 
         for (s in SERVICES) {
             val credential = store.credential(s.id)
+            val enabled = store.isEnabled(s.id)
             servicesBox.addView(section(s.name))
-            val mine = windows.filter { it.provider == s.id }
+            servicesBox.addView(CheckBox(this).apply {
+                text = "Controlla ${s.name}"
+                isChecked = enabled
+                setOnCheckedChangeListener { _, on ->
+                    store.setEnabled(s.id, on)
+                    if (on) refresh() else {
+                        store.lastWindows = store.lastWindows.filter { it.provider != s.id }
+                        store.errors = store.errors - s.id
+                        UsageWidget.updateAll(this@MainActivity)
+                        render()
+                    }
+                }
+            })
+            val mine = if (enabled) windows.filter { it.provider == s.id } else emptyList()
             if (credential == null) {
                 servicesBox.addView(text("Non configurato.", 14f, dim = 0.7f))
+            } else if (!enabled) {
+                servicesBox.addView(text("Spento: non viene controllato (la credenziale resta salvata).", 14f, dim = 0.7f))
             } else if (mine.isEmpty() && s.id !in errors) {
                 servicesBox.addView(text("In attesa del primo controllo.", 14f, dim = 0.7f))
             }
@@ -172,12 +194,12 @@ class MainActivity : Activity() {
                 todayText(w, state[w.key])?.let { row.addView(text("Oggi: ${it.removePrefix("oggi ")}", 13f, dim = 0.7f)) }
                 servicesBox.addView(row)
             }
-            errors[s.id]?.let { servicesBox.addView(text("⚠ $it", 13f).apply { setPadding(0, dp(6), 0, 0) }) }
+            if (enabled) errors[s.id]?.let { servicesBox.addView(text("⚠ $it", 13f).apply { setPadding(0, dp(6), 0, 0) }) }
 
             val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, 0) }
             if (s.loginUrl != null) buttons.addView(smallButton("Accedi") { openLogin(s, null) })
             buttons.addView(smallButton("Incolla") { askCredential(s) })
-            if (credential != null) buttons.addView(smallButton("Rimuovi") { remove(s) })
+            if (credential != null) buttons.addView(smallButton("Cancella") { remove(s) })
             servicesBox.addView(buttons)
             val links = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             links.addView(smallButton("Pagina consumo") { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(s.usagePage))) })
@@ -206,6 +228,11 @@ class MainActivity : Activity() {
 
     private fun loadSettingsIntoFields() {
         val s = store.settings
+        notifBox.isChecked = store.notificationsEnabled
+        backgroundBox.isChecked = store.backgroundEnabled
+        authBox.isChecked = store.authAlertsEnabled
+        shortBox.isChecked = s.shortEnabled
+        longBox.isChecked = s.longEnabled
         tShortField.setText(s.thresholdsShort.joinToString(", "))
         tLongField.setText(s.thresholdsLong.joinToString(", "))
         paceBox.isChecked = s.paceEnabled
@@ -219,12 +246,18 @@ class MainActivity : Activity() {
                 ?: throw IllegalArgumentException("Il margine deve essere un numero intero")
             require(margin in 1..50) { "Il margine sul ritmo va da 1 a 50 punti" }
             store.settings = AlertSettings(
+                shortEnabled = shortBox.isChecked,
+                longEnabled = longBox.isChecked,
                 thresholdsShort = parseThresholds(tShortField.text.toString()),
                 thresholdsLong = parseThresholds(tLongField.text.toString()),
                 paceEnabled = paceBox.isChecked,
                 paceMargin = margin,
                 dailyEnabled = dailyBox.isChecked,
             )
+            store.notificationsEnabled = notifBox.isChecked
+            store.authAlertsEnabled = authBox.isChecked
+            store.backgroundEnabled = backgroundBox.isChecked
+            UsageWorker.applySetting(this)
             Toast.makeText(this, "Impostazioni salvate", Toast.LENGTH_SHORT).show()
             loadSettingsIntoFields()
         } catch (e: IllegalArgumentException) {
@@ -284,9 +317,9 @@ class MainActivity : Activity() {
 
     private fun remove(s: Service) {
         AlertDialog.Builder(this)
-            .setTitle("Rimuovere ${s.name}?")
-            .setMessage("L'app smette di controllarlo e dimentica la sua credenziale.")
-            .setPositiveButton("Rimuovi") { _, _ ->
+            .setTitle("Cancellare la credenziale di ${s.name}?")
+            .setMessage("L'app la dimentica. Per smettere solo di controllarlo, togli invece la spunta «Controlla ${s.name}».")
+            .setPositiveButton("Cancella") { _, _ ->
                 store.setCredential(s.id, null)
                 UsageWidget.updateAll(this)
                 render()

@@ -63,8 +63,11 @@ data class UsageWindow(
     val fullLabel: String get() = "${PROVIDER_NAMES[provider] ?: provider} · $label"
 }
 
+/** Ogni avviso si può accendere e spegnere singolarmente. */
 data class AlertSettings(
+    val shortEnabled: Boolean = true,      // soglie delle sessioni brevi
     val thresholdsShort: List<Int> = listOf(80),
+    val longEnabled: Boolean = true,       // soglie di settimana / mese
     val thresholdsLong: List<Int> = listOf(50, 75, 90),
     val paceEnabled: Boolean = true,
     val paceMargin: Int = 10,
@@ -215,7 +218,10 @@ fun evaluate(
         var ws = if (newWindow) WindowState(resetsAt = w.resetsAt?.toString()) else old!!
         ws = updateDay(ws, old, newWindow, w, today)
 
-        val thresholds = if (w.isLong) settings.thresholdsLong else settings.thresholdsShort
+        val thresholds = when {
+            w.isLong -> if (settings.longEnabled) settings.thresholdsLong else emptyList()
+            else -> if (settings.shortEnabled) settings.thresholdsShort else emptyList()
+        }
         val crossed = thresholds.filter { w.utilization >= it && it !in ws.notified }.sorted()
         if (crossed.isNotEmpty()) {
             alerts += Alert(

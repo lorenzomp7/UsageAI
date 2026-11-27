@@ -25,7 +25,8 @@ object UsageChecker {
         val warned = store.authWarned.toMutableSet()
         val fresh = mutableListOf<UsageWindow>()
         val kept = mutableListOf<UsageWindow>()
-        val active = SERVICES.mapNotNull { s -> store.credential(s.id)?.let { s to it } }
+        val active = SERVICES.filter { store.isEnabled(it.id) }
+            .mapNotNull { s -> store.credential(s.id)?.let { s to it } }
 
         for ((service, credential) in active) {
             try {
@@ -40,7 +41,7 @@ object UsageChecker {
                 kept += previous.filter { it.provider == service.id }
                 if (service.id !in warned) {
                     warned += service.id
-                    Notifier.authExpired(context, service.name, e.message ?: "")
+                    if (store.authAlertsEnabled) Notifier.authExpired(context, service.name, e.message ?: "")
                 }
             } catch (e: ApiException) {
                 errors[service.id] = e.message ?: "Errore"
@@ -54,7 +55,8 @@ object UsageChecker {
         val activeIds = active.map { it.first.id }.toSet()
         val (alerts, newState) = evaluate(fresh, store.settings, store.state, now)
         store.state = newState
-        store.lastWindows = (fresh + kept).sortedBy { w -> SERVICES.indexOfFirst { it.id == w.provider } }
+        // I servizi spenti spariscono da schermata e widget (la credenziale resta salvata).
+        store.lastWindows = (fresh + kept).filter { it.provider in activeIds }.sortedBy { w -> SERVICES.indexOfFirst { it.id == w.provider } }
         store.errors = errors.filterKeys { it in activeIds }
         store.authWarned = warned
         store.lastCheck = now.toEpochMilli()
@@ -82,6 +84,15 @@ class UsageWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 .build()
             WorkManager.getInstance(context)
                 .enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.UPDATE, req)
+        }
+
+        fun cancel(context: Context) {
+            WorkManager.getInstance(context).cancelUniqueWork(PERIODIC)
+        }
+
+        /** Avvia o ferma il controllo automatico secondo l'impostazione salvata. */
+        fun applySetting(context: Context) {
+            if (Store(context).backgroundEnabled) schedule(context) else cancel(context)
         }
 
         fun runNow(context: Context) {

@@ -95,7 +95,7 @@ def test_no_provider_configured(tmp_path, monkeypatch):
     a, tray = setup(tmp_path, monkeypatch, [FakeProvider("claude", "Claude", [])], {})
     a.check_once()
     a.refresh_tray()
-    assert "Nessun servizio configurato" in tray.title
+    assert "Nessun servizio attivo" in tray.title
 
 
 def test_icon_renders_all_states():
@@ -111,3 +111,38 @@ def test_settings_roundtrip(tmp_path, monkeypatch):
     storage.save_settings(s)
     s2 = storage.load_settings()
     assert s2.thresholds_long == [70] and s2.interval_min == 10
+
+
+def test_every_option_can_be_switched_off(tmp_path, monkeypatch):
+    from usageai.core import Settings
+    providers = [
+        FakeProvider("claude", "Claude", [w("claude", "Sessione 5 ore", 95, 5), w("claude", "Settimana", 95, 168)]),
+        FakeProvider("cursor", "Cursor", exc=AuthError("scaduta")),
+        FakeProvider("copilot", "Copilot", [w("copilot", "Richieste premium", 99, 720)]),
+    ]
+    creds = {"claude": "k", "cursor": "c", "copilot": "t"}
+
+    # soglie brevi e lunghe spente, ritmo e quota spenti, avviso accesso spento, Copilot spento
+    a, tray = setup(tmp_path, monkeypatch, providers, creds)
+    a.settings = Settings(short_enabled=False, long_enabled=False, pace_enabled=False, daily_enabled=False,
+                          auth_alerts_enabled=False, disabled_providers=["copilot"])
+    a.check_once()
+    assert tray.notes == []
+    assert "copilot" not in a.windows and "claude" in a.windows
+
+    # interruttore generale: niente notifiche anche con tutto acceso
+    b, tray2 = setup(tmp_path / "b", monkeypatch, providers, creds)
+    b.settings = Settings(notifications_enabled=False)
+    b.check_once()
+    assert tray2.notes == []
+    b.toggle_notifications()
+    assert b.settings.notifications_enabled is True
+
+
+def test_toggles_are_saved(tmp_path, monkeypatch):
+    from usageai.core import Settings
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    s = Settings(notifications_enabled=False, short_enabled=False, long_enabled=False, pace_enabled=False,
+                 daily_enabled=False, auth_alerts_enabled=False, disabled_providers=["gemini", "grok"])
+    storage.save_settings(s)
+    assert storage.load_settings() == s

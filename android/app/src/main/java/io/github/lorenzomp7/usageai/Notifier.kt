@@ -39,6 +39,7 @@ object Notifier {
 
     private fun post(context: Context, channel: String, id: Int, title: String, text: String) {
         if (!canNotify(context)) return
+        if (!Store(context).notificationsEnabled) return
         createChannels(context)
         val open = PendingIntent.getActivity(
             context, 0,

@@ -29,7 +29,21 @@ Ci sono due app che fanno la stessa cosa:
 
 ## Avvisi
 
-Valgono per tutti i servizi:
+Valgono per tutti i servizi. **Ogni opzione si accende e si spegne da sola** (Windows: Impostazioni → Avvisi e una scheda per servizio; Android: schermata principale):
+
+| Interruttore | Default | Cosa spegne |
+|---|---|---|
+| Notifiche attive | acceso | Tutte le notifiche (i dati continuano ad aggiornarsi). Su Windows anche dal menu dell'icona |
+| Controllo automatico (solo Android) | acceso | Il controllo ogni 15 minuti in background; resta «Aggiorna ora» |
+| Soglie sessioni brevi | acceso | Gli avvisi sulle sessioni da 5 ore |
+| Soglie periodi lunghi | acceso | Gli avvisi su settimana e mese |
+| Ritmo | acceso | L'avviso «stai andando troppo veloce» |
+| Quota giornaliera | acceso | L'avviso sul 14,29% al giorno |
+| Accesso scaduto | acceso | L'avviso quando una credenziale scade |
+| Controlla <servizio> | acceso se configurato | Un singolo servizio; la credenziale resta salvata |
+| Avvia con Windows (solo Windows) | spento | L'avvio automatico |
+
+Come funzionano:
 
 - **Soglie brevi** (sessioni fino a 12 ore, es. le 5 ore): default 80%.
 - **Soglie lunghe** (settimana o mese): default 50, 75, 90%.

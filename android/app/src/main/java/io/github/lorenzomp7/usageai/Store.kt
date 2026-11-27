@@ -24,6 +24,8 @@ class Store(context: Context) {
 
     var settings: AlertSettings
         get() = AlertSettings(
+            shortEnabled = prefs.getBoolean("short_on", true),
+            longEnabled = prefs.getBoolean("long_on", true),
             thresholdsShort = intList(prefs.getString("t_short", null) ?: prefs.getString("t5h", null)) ?: listOf(80),
             thresholdsLong = intList(prefs.getString("t_long", null) ?: prefs.getString("tweek", null)) ?: listOf(50, 75, 90),
             paceEnabled = prefs.getBoolean("pace", true),
@@ -32,6 +34,8 @@ class Store(context: Context) {
         )
         set(v) {
             prefs.edit()
+                .putBoolean("short_on", v.shortEnabled)
+                .putBoolean("long_on", v.longEnabled)
                 .putString("t_short", v.thresholdsShort.joinToString(","))
                 .putString("t_long", v.thresholdsLong.joinToString(","))
                 .putBoolean("pace", v.paceEnabled)
@@ -57,6 +61,31 @@ class Store(context: Context) {
     var lastCheck: Long
         get() = prefs.getLong("last_check", 0L)
         set(v) { prefs.edit().putLong("last_check", v).apply() }
+
+    /** Interruttore generale delle notifiche. */
+    var notificationsEnabled: Boolean
+        get() = prefs.getBoolean("notif_on", true)
+        set(v) { prefs.edit().putBoolean("notif_on", v).apply() }
+
+    /** Avviso quando l'accesso a un servizio scade. */
+    var authAlertsEnabled: Boolean
+        get() = prefs.getBoolean("auth_alerts_on", true)
+        set(v) { prefs.edit().putBoolean("auth_alerts_on", v).apply() }
+
+    /** Controllo automatico ogni 15 minuti in background. */
+    var backgroundEnabled: Boolean
+        get() = prefs.getBoolean("background_on", true)
+        set(v) { prefs.edit().putBoolean("background_on", v).apply() }
+
+    /** Servizi spenti: non vengono controllati, ma la credenziale resta. */
+    var disabledServices: Set<String>
+        get() = prefs.getStringSet("disabled_services", emptySet())?.toSet() ?: emptySet()
+        set(v) { prefs.edit().putStringSet("disabled_services", v).apply() }
+
+    fun isEnabled(service: String) = service !in disabledServices
+    fun setEnabled(service: String, on: Boolean) {
+        disabledServices = if (on) disabledServices - service else disabledServices + service
+    }
 
     var authWarned: Set<String>
         get() = prefs.getStringSet("auth_warned_set", emptySet()) ?: emptySet()

@@ -278,4 +278,11 @@ class UsageLogicTest {
         val s3 = evaluate(listOf(week(10.0)), off, emptyMap(), t, utc).second
         assertTrue(dayAlerts(evaluate(listOf(week(60.0)), off, s3, t.plus(Duration.ofHours(1)), utc).first).isEmpty())
     }
+
+    @Test fun thresholdGroupsCanBeSwitchedOff() {
+        val off = AlertSettings(shortEnabled = false, longEnabled = false, paceEnabled = false, dailyEnabled = false)
+        assertTrue(evaluate(claude(five = 99.0, week = 99.0), off, emptyMap(), now).first.isEmpty())
+        val onlyLong = AlertSettings(shortEnabled = false, paceEnabled = false, dailyEnabled = false)
+        assertEquals(listOf("claude:seven_day"), evaluate(claude(five = 99.0, week = 99.0), onlyLong, emptyMap(), now).first.map { it.key })
+    }
 }

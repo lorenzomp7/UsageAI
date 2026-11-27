@@ -55,6 +55,8 @@ class UsageApp:
     def active_providers(self):
         out = []
         for p in self.providers:
+            if p.id in self.settings.disabled_providers:
+                continue
             cred = storage.get_credential(p.id) or p.auto_credential()
             if cred:
                 out.append((p, cred))
@@ -70,7 +72,7 @@ class UsageApp:
                 self.windows.pop(pid, None)
                 self.errors.pop(pid, None)
         if not active:
-            self.general_error = "Nessun servizio configurato: apri Impostazioni."
+            self.general_error = "Nessun servizio attivo: apri Impostazioni."
             return []
         self.general_error = None
         now = datetime.now(timezone.utc)
@@ -87,7 +89,8 @@ class UsageApp:
                 self.errors[p.id] = str(e)
                 if p.id not in self.auth_warned:
                     self.auth_warned.add(p.id)
-                    self.notify(f"UsageAI: accesso a {p.name} scaduto", str(e))
+                    if self.settings.auth_alerts_enabled:
+                        self.notify(f"UsageAI: accesso a {p.name} scaduto", str(e))
             except ApiError as e:
                 self.errors[p.id] = str(e)
                 log.warning("%s: %s", p.id, e)
@@ -120,6 +123,8 @@ class UsageApp:
 
     def notify(self, title: str, text: str):
         log.info("notifica: %s | %s", title, text)
+        if not self.settings.notifications_enabled:
+            return
         if self.tray is not None:
             try:
                 self.tray.notify(text, title)
@@ -187,6 +192,10 @@ class UsageApp:
         except Exception:
             pass
 
+    def toggle_notifications(self, *_):
+        self.settings.notifications_enabled = not self.settings.notifications_enabled
+        storage.save_settings(self.settings)
+
     def open_settings(self, *_):
         threading.Thread(target=self._settings_thread, daemon=True).start()
 
@@ -240,6 +249,8 @@ def run():
             yield pystray.MenuItem(line, None, enabled=False)
         yield pystray.Menu.SEPARATOR
         yield pystray.MenuItem("Aggiorna ora", app.refresh_now, default=True)
+        yield pystray.MenuItem("Notifiche attive", app.toggle_notifications,
+                               checked=lambda _item: app.settings.notifications_enabled)
         pages = [pystray.MenuItem(p.name, open_page(p.id)) for p in app.providers if p.id in USAGE_PAGES]
         yield pystray.MenuItem("Apri pagina consumo", pystray.Menu(*pages))
         yield pystray.MenuItem("Impostazioni…", app.open_settings)

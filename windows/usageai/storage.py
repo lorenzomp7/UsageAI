@@ -52,10 +52,13 @@ def load_settings() -> Settings:
         s.thresholds_short = short
     if long is not None:
         s.thresholds_long = long
-    if isinstance(raw.get("pace_enabled"), bool):
-        s.pace_enabled = raw["pace_enabled"]
-    if isinstance(raw.get("daily_enabled"), bool):
-        s.daily_enabled = raw["daily_enabled"]
+    for name in ("notifications_enabled", "short_enabled", "long_enabled", "pace_enabled",
+                 "daily_enabled", "auth_alerts_enabled"):
+        if isinstance(raw.get(name), bool):
+            setattr(s, name, raw[name])
+    dp = raw.get("disabled_providers")
+    if isinstance(dp, list):
+        s.disabled_providers = sorted({x for x in dp if isinstance(x, str)})
     for name, lo, hi in (("pace_margin", 1, 50), ("interval_min", 1, 60)):
         v = raw.get(name)
         if isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi:

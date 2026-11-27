@@ -47,11 +47,17 @@ class Window:
 
 @dataclass
 class Settings:
+    """Ogni avviso e ogni servizio si può accendere e spegnere singolarmente."""
+    notifications_enabled: bool = True   # interruttore generale delle notifiche
+    short_enabled: bool = True           # soglie delle sessioni brevi
     thresholds_short: list[int] = field(default_factory=lambda: [80])
+    long_enabled: bool = True            # soglie di settimana / mese
     thresholds_long: list[int] = field(default_factory=lambda: [50, 75, 90])
     pace_enabled: bool = True
     pace_margin: int = 10      # punti percentuali oltre il ritmo "giusto"
     daily_enabled: bool = True  # quota giornaliera: 100% / giorni del periodo
+    auth_alerts_enabled: bool = True     # avviso quando l'accesso a un servizio scade
+    disabled_providers: list[str] = field(default_factory=list)   # servizi spenti (credenziale tenuta)
     interval_min: int = 5      # solo Windows
 
 
@@ -227,7 +233,10 @@ def evaluate(windows: list[Window], settings: Settings,
                              pace_notified=old.pace_notified)
         _update_day(ws, old, new_window, w, today)
 
-        thresholds = settings.thresholds_long if w.is_long else settings.thresholds_short
+        if w.is_long:
+            thresholds = settings.thresholds_long if settings.long_enabled else []
+        else:
+            thresholds = settings.thresholds_short if settings.short_enabled else []
         crossed = sorted(t for t in thresholds if w.utilization >= t and t not in ws.notified)
         if crossed:
             top = crossed[-1]

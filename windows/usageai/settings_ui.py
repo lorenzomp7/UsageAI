@@ -1,4 +1,7 @@
-"""Finestra Impostazioni (tkinter, incluso in Python): una scheda per gli avvisi e una per servizio."""
+"""Finestra Impostazioni (tkinter, incluso in Python): una scheda per gli avvisi e una per servizio.
+
+Ogni avviso e ogni servizio ha il suo interruttore.
+"""
 from __future__ import annotations
 
 import tkinter as tk
@@ -12,7 +15,7 @@ def open_settings(settings: Settings, providers, configured: dict, auto: dict, a
     """Blocca finché la finestra è aperta.
 
     on_save(settings, credentials, autostart): credentials = {id_servizio: valore nuovo, o None per rimuovere}
-    con dentro solo i servizi modificati.
+    con dentro solo i servizi modificati. I servizi spenti stanno in settings.disabled_providers.
     """
     root = tk.Tk()
     if _autoclose_ms:          # solo per il test automatico su GitHub Actions
@@ -32,67 +35,97 @@ def open_settings(settings: Settings, providers, configured: dict, auto: dict, a
     # ---- scheda Avvisi ----
     alerts = ttk.Frame(nb, padding=12)
     nb.add(alerts, text="Avvisi")
+    r = 0
 
-    def row(parent, r, label, value):
-        ttk.Label(parent, text=label).grid(row=r, column=0, sticky="w", pady=3)
-        var = tk.StringVar(value=value)
-        ttk.Entry(parent, textvariable=var, width=16).grid(row=r, column=1, sticky="w", pady=3, padx=(8, 0))
+    def check(text, value, pad=8):
+        nonlocal r
+        var = tk.BooleanVar(value=value)
+        ttk.Checkbutton(alerts, text=text, variable=var).grid(row=r, column=0, columnspan=2, sticky="w", pady=(pad, 0))
+        r += 1
         return var
 
-    ts = row(alerts, 0, "Soglie sessioni brevi, es. 5 ore (%)", ", ".join(map(str, settings.thresholds_short)))
-    tl = row(alerts, 1, "Soglie periodi lunghi, settimana o mese (%)", ", ".join(map(str, settings.thresholds_long)))
-    ttk.Label(alerts, text="Valgono per tutti i servizi. Più soglie separate da virgola; vuoto = nessun avviso.",
-              foreground="#666", wraplength=430).grid(row=2, column=0, columnspan=2, sticky="w")
-    pace_var = tk.BooleanVar(value=settings.pace_enabled)
-    ttk.Checkbutton(alerts, text="Avvisami se consumo un periodo lungo più veloce del ritmo costante",
-                    variable=pace_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
-    margin = row(alerts, 4, "…oltre quanti punti di anticipo", str(settings.pace_margin))
-    daily_var = tk.BooleanVar(value=settings.daily_enabled)
-    ttk.Checkbutton(alerts, text="Avvisami se in un giorno supero la quota giornaliera "
-                                 "(100% / giorni del periodo: settimana = 14,29% al giorno)",
-                    variable=daily_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=(10, 0))
-    interval = row(alerts, 6, "Controlla ogni (minuti)", str(settings.interval_min))
-    auto_var = tk.BooleanVar(value=autostart)
-    ttk.Checkbutton(alerts, text="Avvia con Windows", variable=auto_var).grid(
-        row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
+    def entry(label, value):
+        nonlocal r
+        ttk.Label(alerts, text=label).grid(row=r, column=0, sticky="w", pady=2, padx=(24, 0))
+        var = tk.StringVar(value=value)
+        ttk.Entry(alerts, textvariable=var, width=16).grid(row=r, column=1, sticky="w", pady=2, padx=(8, 0))
+        r += 1
+        return var
+
+    def note(text):
+        nonlocal r
+        ttk.Label(alerts, text=text, foreground="#666", wraplength=440).grid(
+            row=r, column=0, columnspan=2, sticky="w", padx=(24, 0))
+        r += 1
+
+    notif_var = check("Notifiche attive (interruttore generale)", settings.notifications_enabled, pad=0)
+    short_var = check("Soglie delle sessioni brevi (es. 5 ore)", settings.short_enabled)
+    ts = entry("Soglie (%)", ", ".join(map(str, settings.thresholds_short)))
+    long_var = check("Soglie dei periodi lunghi (settimana o mese)", settings.long_enabled)
+    tl = entry("Soglie (%)", ", ".join(map(str, settings.thresholds_long)))
+    note("Più soglie separate da virgola, es. 50, 75, 90.")
+    pace_var = check("Avviso sul ritmo: periodo lungo consumato più veloce del tempo passato", settings.pace_enabled)
+    margin = entry("…oltre quanti punti di anticipo", str(settings.pace_margin))
+    daily_var = check("Quota giornaliera: 100% / giorni del periodo (settimana = 14,29% al giorno)",
+                      settings.daily_enabled)
+    auth_var = check("Avviso quando l'accesso a un servizio scade", settings.auth_alerts_enabled)
+    ttk.Separator(alerts).grid(row=r, column=0, columnspan=2, sticky="we", pady=10)
+    r += 1
+    ttk.Label(alerts, text="Controlla ogni (minuti)").grid(row=r, column=0, sticky="w")
+    interval = tk.StringVar(value=str(settings.interval_min))
+    ttk.Entry(alerts, textvariable=interval, width=16).grid(row=r, column=1, sticky="w", padx=(8, 0))
+    r += 1
+    auto_var = check("Avvia con Windows", autostart)
 
     # ---- una scheda per servizio ----
     cred_vars: dict[str, tk.StringVar] = {}
     remove_vars: dict[str, tk.BooleanVar] = {}
+    enabled_vars: dict[str, tk.BooleanVar] = {}
     for p in providers:
+        has = configured.get(p.id) or auto.get(p.id)
+        on = p.id not in settings.disabled_providers
         tab = ttk.Frame(nb, padding=12)
-        nb.add(tab, text=p.name + (" ✓" if configured.get(p.id) or auto.get(p.id) else ""))
+        nb.add(tab, text=p.name + (" ✓" if has and on else (" ⏸" if has else "")))
+        ev = tk.BooleanVar(value=on)
+        ttk.Checkbutton(tab, text=f"Controlla {p.name}", variable=ev).grid(row=0, column=0, sticky="w")
+        enabled_vars[p.id] = ev
         if configured.get(p.id):
-            status = "Configurato. Lascia vuoto per non cambiarlo."
+            status = "Configurato. Lascia vuoto il campo per non cambiare la credenziale."
         elif auto.get(p.id):
             status = "Trovato da solo su questo PC: non serve fare nulla."
         else:
             status = "Non configurato: incolla la credenziale per attivarlo."
-        ttk.Label(tab, text=status, foreground="#2e7d32" if (configured.get(p.id) or auto.get(p.id))
-                  else "#666").grid(row=0, column=0, sticky="w")
-        ttk.Label(tab, text=p.credential_label).grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(tab, text=status, foreground="#2e7d32" if has else "#666").grid(
+            row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(tab, text=p.credential_label).grid(row=2, column=0, sticky="w", pady=(10, 0))
         var = tk.StringVar()
-        ttk.Entry(tab, textvariable=var, show="•", width=56).grid(row=2, column=0, sticky="we", pady=2)
+        ttk.Entry(tab, textvariable=var, show="•", width=56).grid(row=3, column=0, sticky="we", pady=2)
         cred_vars[p.id] = var
         ttk.Label(tab, text=p.help, foreground="#444", justify="left", wraplength=430).grid(
-            row=3, column=0, sticky="w", pady=(6, 0))
+            row=4, column=0, sticky="w", pady=(6, 0))
         if configured.get(p.id):
             rv = tk.BooleanVar(value=False)
-            ttk.Checkbutton(tab, text="Rimuovi questo servizio", variable=rv).grid(
-                row=4, column=0, sticky="w", pady=(10, 0))
+            ttk.Checkbutton(tab, text="Cancella la credenziale salvata", variable=rv).grid(
+                row=5, column=0, sticky="w", pady=(10, 0))
             remove_vars[p.id] = rv
-        ttk.Label(tab, text="La credenziale resta nella Gestione credenziali di Windows e viene "
+        ttk.Label(tab, text="Togliendo la spunta in alto il servizio non viene più controllato, ma la credenziale "
+                            "resta salvata. La credenziale sta nella Gestione credenziali di Windows e viene "
                             "mandata solo al sito del servizio.",
-                  foreground="#888", wraplength=430).grid(row=5, column=0, sticky="w", pady=(10, 0))
+                  foreground="#888", wraplength=430).grid(row=6, column=0, sticky="w", pady=(10, 0))
 
     def save():
         try:
             new = Settings(
+                notifications_enabled=notif_var.get(),
+                short_enabled=short_var.get(),
                 thresholds_short=parse_thresholds(ts.get()),
+                long_enabled=long_var.get(),
                 thresholds_long=parse_thresholds(tl.get()),
                 pace_enabled=pace_var.get(),
                 pace_margin=int(margin.get()),
                 daily_enabled=daily_var.get(),
+                auth_alerts_enabled=auth_var.get(),
+                disabled_providers=sorted(pid for pid, v in enabled_vars.items() if not v.get()),
                 interval_min=int(interval.get()),
             )
             if not 1 <= new.pace_margin <= 50:
@@ -110,12 +143,6 @@ def open_settings(settings: Settings, providers, configured: dict, auto: dict, a
                 creds[pid] = value
             elif pid in remove_vars and remove_vars[pid].get():
                 creds[pid] = None
-        will_have_any = any(
-            (configured.get(p.id) and creds.get(p.id, "keep") is not None) or auto.get(p.id) or creds.get(p.id)
-            for p in providers)
-        if not will_have_any:
-            messagebox.showerror("Nessun servizio", "Configura almeno un servizio.", parent=root)
-            return
         on_save(new, creds, auto_var.get())
         root.destroy()
 
